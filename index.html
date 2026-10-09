@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Cedar Rapids Country Club — 3D Course Model</title>
+<meta name="description" content="Interactive 3D model of the Cedar Rapids Country Club golf course, built from public aerial, elevation and map data. Fly all 18 holes, the clubhouse and the parking lot.">
+<meta property="og:title" content="Cedar Rapids Country Club — 3D Course Model">
+<meta property="og:description" content="Fly all 18 holes in an interactive 3D replica built from public data.">
+<meta property="og:image" content="/renders/wide_south.jpg">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%277%27 fill=%27%2314281a%27/%3E%3Ccircle cx=%2716%27 cy=%2720%27 r=%278%27 fill=%27%237fb04a%27/%3E%3Cpath d=%27M16 4v14%27 stroke=%27%23e3c565%27 stroke-width=%272.5%27/%3E%3Cpath d=%27M16 4l8 3-8 3z%27 fill=%27%23d0201a%27/%3E%3C/svg%3E">
+<meta name="theme-color" content="#14281a">
+<link rel="preload" href="/tex/terrain.jpg" as="image" crossorigin>
+<style>
+:root{--bg:#0f1d14;--panel:rgba(15,29,20,.88);--ink:#eef3ea;--mute:#a9b9a6;--acc:#e3c565;--line:rgba(255,255,255,.12)}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow:hidden}
+#c{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+#panel{position:fixed;top:12px;left:12px;bottom:12px;width:300px;max-width:calc(100vw - 24px);background:var(--panel);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;z-index:5;transition:transform .25s}
+#panel.hide{transform:translateX(-120%)}
+header{padding:16px 16px 12px;border-bottom:1px solid var(--line)}
+h1{font-size:17px;margin:0 0 2px;font-weight:650;letter-spacing:.01em}
+header p{margin:0;color:var(--mute);font-size:12.5px}
+.row{display:flex;gap:6px;flex-wrap:wrap;padding:10px 16px 0}
+button{font:inherit;color:var(--ink);background:rgba(255,255,255,.07);border:1px solid var(--line);border-radius:8px;padding:7px 11px;cursor:pointer}
+button:hover{background:rgba(255,255,255,.14)}
+button.on{background:var(--acc);color:#1a2314;border-color:var(--acc);font-weight:600}
+#holes{flex:1;overflow:auto;padding:10px 10px 6px;display:grid;grid-template-columns:1fr;gap:4px}
+.hole{display:grid;grid-template-columns:30px 1fr auto;align-items:center;gap:8px;text-align:left;padding:7px 9px;border-radius:9px;background:transparent;border:1px solid transparent}
+.hole:hover{background:rgba(255,255,255,.08)}
+.hole.on{background:rgba(227,197,101,.16);border-color:rgba(227,197,101,.5)}
+.hole b{font-size:15px;color:var(--acc)}
+.hole span{color:var(--ink);font-size:13px}
+.hole small{color:var(--mute);font-size:12px;white-space:nowrap}
+.hole em{display:block;font-style:normal;color:var(--mute);font-size:11.5px}
+.opts{padding:8px 16px;border-top:1px solid var(--line);display:flex;gap:14px;flex-wrap:wrap;color:var(--mute);font-size:12.5px}
+.opts label{display:flex;align-items:center;gap:6px;cursor:pointer}
+footer{padding:9px 16px 12px;border-top:1px solid var(--line);color:var(--mute);font-size:11.5px}
+footer a{color:var(--acc);text-decoration:none;cursor:pointer}
+#tog{position:fixed;top:12px;left:12px;z-index:6;display:none}
+#panel.hide + #tog{display:block}
+#hud{position:fixed;right:14px;bottom:14px;z-index:4;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.7);font-size:12px;text-align:right;pointer-events:none}
+#title{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:4;pointer-events:none;text-align:center;text-shadow:0 1px 6px rgba(0,0,0,.65);font-size:15px;font-weight:600;opacity:0;transition:opacity .5s}
+#title.show{opacity:1}
+#title small{display:block;font-weight:400;font-size:12.5px;opacity:.9}
+#load{position:fixed;inset:0;z-index:20;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;transition:opacity .6s}
+#load.done{opacity:0;pointer-events:none}
+#bar{width:min(320px,70vw);height:5px;background:rgba(255,255,255,.12);border-radius:3px;overflow:hidden}
+#bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
+#gal{position:fixed;inset:0;z-index:15;background:rgba(6,12,8,.94);display:none;overflow:auto;padding:56px 18px 30px}
+#gal.show{display:block}
+#gal .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;max-width:1400px;margin:0 auto}
+#gal img{width:100%;border-radius:8px;display:block;cursor:zoom-in;background:#1a281d}
+#gal figure{margin:0}
+#gal figcaption{color:var(--mute);font-size:12px;padding:4px 2px 0}
+#gclose{position:fixed;top:12px;right:14px;z-index:16;display:none}
+#gal.show ~ #gclose{display:block}
+#lb{position:fixed;inset:0;z-index:17;background:rgba(0,0,0,.92);display:none;align-items:center;justify-content:center}
+#lb.show{display:flex}
+#lb img{max-width:96vw;max-height:94vh;border-radius:6px}
+@media (max-width:640px){#panel{width:calc(100vw - 24px);bottom:auto;max-height:52vh}.hole{grid-template-columns:26px 1fr auto}}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"></div>
+<aside id="panel">
+  <header>
+    <h1>Cedar Rapids Country Club</h1>
+    <p>Interactive 3D course model · Par 72 · Cedar Rapids, Iowa</p>
+  </header>
+  <div class="row" id="views"></div>
+  <div id="holes"></div>
+  <div class="opts">
+    <label><input type="checkbox" id="oTrees" checked> Trees</label>
+    <label><input type="checkbox" id="oLines"> Hole lines</label>
+    <label><input type="checkbox" id="oLabels" checked> Labels</label>
+    <label><input type="checkbox" id="oSpin"> Orbit</label>
+  </div>
+  <footer>Unofficial fan-made model built from public data (USDA NAIP aerial imagery, USGS elevation, OpenStreetMap). An approximation — not survey-exact, and not affiliated with the club. <a id="about">Sources</a></footer>
+</aside>
+<button id="tog">☰ Holes</button>
+<div id="hud">Drag to orbit · scroll to zoom · right-drag to pan</div>
+<div id="gal"><div class="grid" id="grid"></div></div>
+<button id="gclose">Close ✕</button>
+<div id="lb"><img alt=""></div>
+<div id="load"><div>Loading course…</div><div id="bar"><i></i></div></div>
+<script type="importmap">{"imports":{"three":"/vendor/three.module.min.js"}}</script>
+<script type="module" src="/main.js"></script>
+</body>
+</html>
