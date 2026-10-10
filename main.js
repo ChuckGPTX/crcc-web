@@ -8,47 +8,56 @@ const setProg = p => { progress = Math.max(progress, p); bar.style.width = (prog
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = $('#c');
+const MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 700;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 1.0;
+renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE ? 1.5 : 2));
+renderer.toneMapping = THREE.AgXToneMapping;
+renderer.toneMappingExposure = 0.95;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 const scene = new THREE.Scene();
-const FOG = new THREE.Color(0xc4d6e6);
-scene.fog = new THREE.FogExp2(FOG, 0.00042);
-const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 8000);
+const FOG = new THREE.Color(0xb9c6d4);
+scene.fog = new THREE.FogExp2(FOG, 0.00038);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 9000);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true; controls.dampingFactor = 0.08;
 controls.maxPolarAngle = Math.PI * 0.495; controls.minDistance = 3; controls.maxDistance = 2200;
 controls.screenSpacePanning = false;
-
-// sky dome
-{
-  const g = new THREE.SphereGeometry(5000, 32, 16);
-  const m = new THREE.ShaderMaterial({
-    side: THREE.BackSide, depthWrite: false, fog: false,
-    uniforms: { top: { value: new THREE.Color(0x5b8fd0) }, mid: { value: new THREE.Color(0xa9c8e8) }, hor: { value: FOG } },
-    vertexShader: 'varying vec3 p;void main(){p=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-    fragmentShader: 'varying vec3 p;uniform vec3 top,mid,hor;void main(){float h=clamp(p.y,0.,1.);vec3 c=mix(hor,mid,smoothstep(0.,.18,h));c=mix(c,top,smoothstep(.15,.85,h));gl_FragColor=vec4(c,1.);}'
-  });
-  const s = new THREE.Mesh(g, m); s.renderOrder = -1; scene.add(s);
-  scene.userData.sky = s;
-}
-// lights (sun from the south-west, ~34° elevation, like the Blender scene)
-const sun = new THREE.DirectionalLight(0xfff0d8, 2.6);
-{ const az = 235 * Math.PI / 180, el = 34 * Math.PI / 180;
-  const d = 1000; sun.position.set(Math.sin(az) * Math.cos(el) * d, Math.sin(el) * d, -Math.cos(az) * Math.cos(el) * d); }
-scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x66723f, 1.0));
+scene.userData.sky = new THREE.Object3D();
+// sun from the south-west at ~48° (matches the HDRI used in the Blender renders)
+const SUN_DIR = (() => { const az = 235 * Math.PI / 180, el = 48 * Math.PI / 180; return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)); })();
+const sun = new THREE.DirectionalLight(0xfff0dc, 3.0);
+sun.castShadow = true;
+sun.shadow.mapSize.set(MOBILE ? 2048 : 4096, MOBILE ? 2048 : 4096);
+{ const c = sun.shadow.camera; c.left = -170; c.right = 170; c.top = 170; c.bottom = -170; c.near = 10; c.far = 2000; }
+sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.5;
+scene.add(sun, sun.target);
+scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x55623a, 0.35));
 
 // ---------------------------------------------------------------- data
 const fetchJSON = u => fetch(u).then(r => r.json());
 const fetchBuf = u => fetch(u).then(r => r.arrayBuffer());
 const loadTex = u => new Promise((res, rej) => new THREE.TextureLoader().load(u, res, undefined, rej));
-const [meta, hfBuf, treesBuf, blds, manual, cars, holes, cams, pins, gt, tex] = await Promise.all([
+const [meta, hfBuf, treesBuf, blds, manual, cars, holes, cams, pins, gt, tex, skyTex, geo] = await Promise.all([
   fetchJSON('/data/meta.json'), fetchBuf('/data/hf.bin'), fetchBuf('/data/trees.bin'), fetchJSON('/data/buildings.json'),
   fetchJSON('/data/manual.json'), fetchJSON('/data/cars.json'), fetchJSON('/data/holes.json'), fetchJSON('/data/cams.json'),
-  fetchJSON('/data/pins.json'), fetchJSON('/data/gt.json'), loadTex('/tex/terrain.jpg').catch(() => null)
+  fetchJSON('/data/pins.json'), fetchJSON('/data/gt.json'), loadTex('/tex/terrain.jpg').catch(() => null),
+  loadTex('/tex/sky.jpg').catch(() => null), fetchJSON('/geo/geo.json').catch(() => null)
 ]);
+const texCache = {};
+function T(name, repeat = 1, color = true) {
+  const key = name + repeat; if (texCache[key]) return texCache[key];
+  const t = new THREE.TextureLoader().load('/tex/' + name);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(repeat, repeat);
+  t.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 8;
+  return texCache[key] = t;
+}
+if (skyTex) {
+  skyTex.mapping = THREE.EquirectangularReflectionMapping; skyTex.colorSpace = THREE.SRGBColorSpace;
+  scene.background = skyTex;
+  const pm = new THREE.PMREMGenerator(renderer); scene.environment = pm.fromEquirectangular(skyTex).texture; pm.dispose();
+  scene.environmentIntensity = 0.75;
+}
 setProg(0.5);
 const HF = new Uint16Array(hfBuf);
 const NX = meta.nx, NY = meta.ny, STEP = meta.step, ZO = meta.ZO;
@@ -81,46 +90,129 @@ const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // local meters (x east, y
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeVertexNormals();
   if (tex) { tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy(); }
-  const m = new THREE.MeshLambertMaterial({ map: tex, color: tex ? 0xffffff : 0x5f8a3c });
-  const t = new THREE.Mesh(g, m); scene.add(t);
+  const m = new THREE.MeshStandardMaterial({ map: tex, color: tex ? 0xffffff : 0x5f8a3c, roughness: 0.96, metalness: 0 });
+  const detail = T('grass_detail.jpg', 1, false);
+  m.onBeforeCompile = sh => {
+    sh.uniforms.detailMap = { value: detail };
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform sampler2D detailMap;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      {
+        float g = diffuseColor.g - max(diffuseColor.r, diffuseColor.b);
+        float turf = smoothstep(0.005, 0.05, g);
+        float d1 = texture2D(detailMap, vWPos.xz / 0.9).r * 2.0;
+        float d2 = texture2D(detailMap, vWPos.xz / 7.3 + 0.37).r * 2.0;
+        float fade = 1.0 - smoothstep(40.0, 320.0, length(vWPos - cameraPosition));
+        diffuseColor.rgb *= mix(1.0, clamp(d1 * mix(1.0, d2, 0.6), 0.55, 1.5), turf * fade * 0.85);
+      }`);
+  };
+  const t = new THREE.Mesh(g, m); t.receiveShadow = true; scene.add(t);
   // skirt ground beyond the model, matching fog
   const far = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7c8f62 }));
   far.position.y = -14; scene.add(far);
 }
 setProg(0.65);
 
-// ---------------------------------------------------------------- trees
+// ---------------------------------------------------------------- trees (detailed near LOD + simple far LOD)
 const treeGroup = new THREE.Group(); scene.add(treeGroup);
-{
-  const T = new Float32Array(treesBuf), n = T.length / 8;
-  const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
-  let nd = 0, nc = 0;
-  for (let i = 0; i < n; i++) (T[i * 8 + 5] > 0.5 ? nc++ : nd++);
-  const crownG = new THREE.IcosahedronGeometry(1, 1);
-  const trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0);
-  const coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
-  const mat = new THREE.MeshLambertMaterial({ flatShading: false });
-  const crowns = new THREE.InstancedMesh(crownG, mat, nd), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshLambertMaterial({ color: 0x4a3a2a }), nd + nc);
-  const cones = new THREE.InstancedMesh(coneG, mat, nc);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color();
-  let a = 0, b = 0, t = 0;
-  for (let i = 0; i < n; i++) {
-    const x = T[i * 8], y = T[i * 8 + 1], r = Math.max(1.4, T[i * 8 + 3]), h = Math.max(4, T[i * 8 + 4]), typ = T[i * 8 + 5], rot = T[i * 8 + 6];
-    const z = hAt(x, y) - 0.1;
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rot);
-    if (typ > 0.5) {
-      ps.set(x, z + h * 0.08, -y); sc.set(r * 0.85, h * 0.92, r * 0.85); m4.compose(ps, q, sc); cones.setMatrixAt(b, m4);
-      col.setHSL(0.31 + rng() * 0.04, 0.35, 0.07 + rng() * 0.04); cones.setColorAt(b, col); b++;
-      ps.set(x, z, -y); sc.set(0.25, h * 0.15, 0.25); m4.compose(ps, q, sc); trunks.setMatrixAt(t++, m4);
-    } else {
-      const th = h * 0.5;
-      ps.set(x, z, -y); sc.set(Math.max(0.18, r * 0.07), th, Math.max(0.18, r * 0.07)); m4.compose(ps, q, sc); trunks.setMatrixAt(t++, m4);
-      ps.set(x, z + th * 0.9 + (h - th * 0.9) * 0.5, -y); sc.set(r, (h - th * 0.9) * 0.5 * 1.05, r); m4.compose(ps, q, sc); crowns.setMatrixAt(a, m4);
-      col.setHSL(0.24 + rng() * 0.07, 0.40 + rng() * 0.1, 0.10 + rng() * 0.08); crowns.setColorAt(a, col); a++;
-    }
+async function loadGeo(name) {
+  if (!geo || !geo[name]) return null;
+  const buf = await fetchBuf('/geo/' + name.toLowerCase() + '.bin'); const out = [];
+  for (const g of geo[name]) {
+    const n = g.count, o = g.offset;
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(buf, o, n * 3), 3));
+    bg.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(buf, o + n * 12, n * 3), 3));
+    bg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(buf, o + n * 24, n * 2), 2));
+    bg.computeBoundingSphere(); out.push({ mat: g.mat, geo: bg });
   }
-  for (const o of [crowns, trunks, cones]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; o.frustumCulled = false; treeGroup.add(o); }
+  return out;
 }
+const TREE_MATS = {
+  TreeBarkOak: () => new THREE.MeshStandardMaterial({ map: T('bark_oak.jpg'), roughness: 0.95 }),
+  TreeBarkSpruce: () => new THREE.MeshStandardMaterial({ map: T('bark_spruce.jpg'), roughness: 0.95 }),
+  TreeLeafA: () => new THREE.MeshStandardMaterial({ map: T('twigA.png'), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75 }),
+  TreeLeafB: () => new THREE.MeshStandardMaterial({ map: T('twigB.png'), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.75 }),
+  TreeNeedles: () => new THREE.MeshStandardMaterial({ map: T('needles.png'), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 }),
+};
+const [ga0, ga1, gb0] = await Promise.all([loadGeo('Tree_a0'), loadGeo('Tree_a1'), loadGeo('Tree_b0')]);
+const trees = (() => {
+  const TB = new Float32Array(treesBuf), n = TB.length / 8;
+  const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
+  const crownG = new THREE.IcosahedronGeometry(1, 1), trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0), coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
+  const farMat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
+  const crowns = new THREE.InstancedMesh(crownG, farMat, n), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x3e3226, roughness: 0.95 }), n), cones = new THREE.InstancedMesh(coneG, farMat, n);
+  const pos = new Float32Array(n * 3), near = new Float32Array(n * 16), farA = new Float32Array(n * 16), farB = new Float32Array(n * 16);
+  const variant = new Uint8Array(n), cols = new Float32Array(n * 3), tint = new Float32Array(n * 3);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), Y = new THREE.Vector3(0, 1, 0);
+  for (let i = 0; i < n; i++) {
+    const x = TB[i * 8], y = TB[i * 8 + 1], r = Math.max(1.4, TB[i * 8 + 3]), h = Math.max(4, TB[i * 8 + 4]), typ = TB[i * 8 + 5], rot = TB[i * 8 + 6], vr = TB[i * 8 + 7];
+    const z = hAt(x, y) - 0.1; pos[i * 3] = x; pos[i * 3 + 1] = z; pos[i * 3 + 2] = -y;
+    q.setFromAxisAngle(Y, rot);
+    if (typ > 0.5) {
+      variant[i] = 2;
+      ps.set(x, z, -y); sc.set(r / 3.2 * 1.05, h / 18, r / 3.2 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
+      ps.set(x, z + h * 0.08, -y); sc.set(r * 0.85, h * 0.92, r * 0.85); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
+      ps.set(x, z, -y); sc.set(0.25, h * 0.15, 0.25); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
+      col.setHSL(0.31 + rng() * 0.04, 0.35, 0.07 + rng() * 0.04);
+    } else {
+      variant[i] = (vr | 0) % 2;
+      ps.set(x, z, -y); sc.set(r / 5.6 * 1.05, h / 16, r / 5.6 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
+      const th = h * 0.5;
+      ps.set(x, z + th * 0.9 + (h - th * 0.9) * 0.5, -y); sc.set(r, (h - th * 0.9) * 0.5 * 1.05, r); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
+      ps.set(x, z, -y); sc.set(Math.max(0.18, r * 0.07), th, Math.max(0.18, r * 0.07)); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
+      col.setHSL(0.24 + rng() * 0.07, 0.40 + rng() * 0.1, 0.10 + rng() * 0.08);
+    }
+    col.toArray(cols, i * 3);
+    const tv = 0.8 + rng() * 0.35; tint[i * 3] = tv * (0.95 + rng() * 0.1); tint[i * 3 + 1] = tv; tint[i * 3 + 2] = tv * (0.9 + rng() * 0.1);
+  }
+  for (const o of [crowns, trunks, cones]) { o.frustumCulled = false; o.count = 0; o.castShadow = true; treeGroup.add(o); }
+  crowns.setColorAt(0, col); cones.setColorAt(0, col);
+  // near meshes per variant: [bark, leaves]
+  const nearSets = [ga0, ga1, gb0].map(gs => {
+    if (!gs) return null;
+    return gs.map(g => {
+      const mat = (TREE_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x556644 })))();
+      const im = new THREE.InstancedMesh(g.geo, mat, n); im.count = 0; im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true;
+      if (mat.alphaTest) {
+        im.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: mat.map, alphaTest: 0.45 });
+        im.setColorAt(0, new THREE.Color(1, 1, 1));
+      }
+      treeGroup.add(im); return im;
+    });
+  });
+  const R_NEAR = MOBILE ? 140 : 210, lastCam = new THREE.Vector3(1e9, 0, 0);
+  function update(force) {
+    if (!force && lastCam.distanceToSquared(camera.position) < 36) return;
+    lastCam.copy(camera.position);
+    const cx = camera.position.x, cz = camera.position.z, cy = camera.position.y;
+    const R2 = R_NEAR * R_NEAR;
+    const cnt = [0, 0, 0]; let fa = 0, fc = 0, ft = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = pos[i * 3] - cx, dz = pos[i * 3 + 2] - cz, dy = pos[i * 3 + 1] - cy;
+      const v = variant[i], set = nearSets[v];
+      if (set && dx * dx + dz * dz + dy * dy * 0.5 < R2) {
+        const k = cnt[v]++;
+        for (const im of set) {
+          im.instanceMatrix.array.set(near.subarray(i * 16, i * 16 + 16), k * 16);
+          if (im.instanceColor) { im.instanceColor.array[k * 3] = tint[i * 3]; im.instanceColor.array[k * 3 + 1] = tint[i * 3 + 1]; im.instanceColor.array[k * 3 + 2] = tint[i * 3 + 2]; }
+        }
+      } else if (v === 2) {
+        cones.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fc * 16); cones.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fc * 3); fc++;
+        trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
+      } else {
+        crowns.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16); crowns.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fa * 3); fa++;
+        trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
+      }
+    }
+    nearSets.forEach((set, v) => set && set.forEach(im => { im.count = cnt[v]; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }));
+    crowns.count = fa; cones.count = fc; trunks.count = ft;
+    for (const o of [crowns, cones, trunks]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; }
+  }
+  return { update };
+})();
+trees.update(true);
 setProg(0.8);
 
 // ---------------------------------------------------------------- buildings
@@ -168,22 +260,35 @@ for (const b of blds) {
   else if (b.area > 380) { const h = 5.2; walls(P_, base, F + h, wc); hip(P_, F + h, 0.6, rcol, 0.2); }
   else { const two = b.area > 150, h = two ? 5.6 : 3.2; walls(P_, base, F + h, wc); hip(P_, F + h, Math.min(4.2, obbRise(P_) * 0.55), rcol, 0.5); }
 }
-// clubhouse complex (hand-traced)
-const WALLC = { brick: srgb(142, 70, 56), stucco: srgb(214, 200, 176) };
-for (const set of [manual.clubhouse, manual.pool_house, manual.brown_house]) for (const v of set || []) {
-  let zs = 0, zmin = 1e9; for (const p of v.poly) { const z = hAt(p[0], p[1]); zs += z; zmin = Math.min(zmin, z); }
-  const F = zs / v.poly.length + 0.1, base = zmin - 1.0, top = F + Math.max(v.eave, 0.1);
-  walls(v.poly, base, top, WALLC[v.wall] || WALLC.brick);
-  const rc = v.roof_color ? srgb(v.roof_color[0] * 255, v.roof_color[1] * 255, v.roof_color[2] * 255) : srgb(88, 94, 106);
-  if (v.roof === 'flat' || !v.rise) flat(v.poly, top, v.roof === 'flat' && v.eave < 1 ? srgb(150, 150, 146) : srgb(205, 205, 200));
-  else hip(v.poly, top, v.rise, rc, 0.2);
+// clubhouse complex: exact geometry exported from the Blender model, with PBR textures
+const CH_MATS = {
+  CH_Brick: () => new THREE.MeshStandardMaterial({ map: T('brick.jpg', 1 / 1.5), normalMap: T('brick_n.jpg', 1 / 1.5, false), roughness: 0.9 }),
+  CH_Shingle: () => new THREE.MeshStandardMaterial({ map: T('shingle.jpg', 1 / 1.6), normalMap: T('shingle_n.jpg', 1 / 1.6, false), roughness: 0.85 }),
+  CH_Siding: () => new THREE.MeshStandardMaterial({ map: T('siding.jpg', 1 / 2.4), roughness: 0.7 }),
+  CH_Trim: () => new THREE.MeshStandardMaterial({ color: 0xd2d2cb, roughness: 0.45 }),
+  CH_Glass: () => new THREE.MeshStandardMaterial({ color: 0x06090c, roughness: 0.04, metalness: 0.3, envMapIntensity: 1.6 }),
+  CH_Limestone: () => new THREE.MeshStandardMaterial({ map: T('limestone.jpg', 1 / 1.6), roughness: 0.9 }),
+  CH_Concrete: () => new THREE.MeshStandardMaterial({ map: T('concrete.jpg', 1 / 3), roughness: 0.9 }),
+  CH_Membrane: () => new THREE.MeshStandardMaterial({ color: 0xa9a9a5, roughness: 0.8 }),
+  CH_Mulch: () => new THREE.MeshStandardMaterial({ color: 0x4a1a0e, roughness: 0.95 }),
+  CH_Canvas: () => new THREE.MeshStandardMaterial({ color: 0xdccdaa, roughness: 0.85, side: THREE.DoubleSide }),
+  CH_Metal: () => new THREE.MeshStandardMaterial({ color: 0x1a1a1c, roughness: 0.35, metalness: 1 }),
+  CH_CartBody: () => new THREE.MeshStandardMaterial({ color: 0xdcd8cc, roughness: 0.4 }),
+  CH_Seat: () => new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 }),
+  CH_Stucco: () => new THREE.MeshStandardMaterial({ color: 0xcfc4b0, roughness: 0.85 }),
+};
+const chGeo = await loadGeo('clubhouse');
+if (chGeo) for (const g of chGeo) {
+  const mat = (CH_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x999999 })))();
+  mat.side = THREE.DoubleSide;
+  const m = new THREE.Mesh(g.geo, mat); m.castShadow = true; m.receiveShadow = true; scene.add(m);
 }
 function bake(buf, rough) {
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(buf.p, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(buf.c, 3));
   g.computeVertexNormals();
-  const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
-  scene.add(m); return m;
+  const m = new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.85 }));
+  m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
 }
 bake(WALLS); bake(ROOFS);
 // pool + deck
@@ -195,14 +300,14 @@ function flatSurface(poly, col, lift) {
   const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })); scene.add(m); return m;
 }
 if (manual.pool_deck) flatSurface(manual.pool_deck, srgb(205, 200, 188), 0.05);
-if (manual.pool) flatSurface(manual.pool, srgb(70, 165, 205), 0.12);
+if (manual.pool) { const pm = flatSurface(manual.pool, srgb(60, 160, 200), 0.12); pm.material = new THREE.MeshStandardMaterial({ color: srgb(60, 160, 200), roughness: 0.05, metalness: 0.1 }); }
 setProg(0.88);
 
 // ---------------------------------------------------------------- cars, pins, tee markers
 {
   const n = cars.length;
-  const body = new THREE.InstancedMesh(new THREE.BoxGeometry(4.4, 0.7, 1.82), new THREE.MeshLambertMaterial(), n);
-  const cab = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.55, 1.6), new THREE.MeshLambertMaterial({ color: 0x1b2128 }), n);
+  const body = new THREE.InstancedMesh(new THREE.BoxGeometry(4.4, 0.7, 1.82), new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.5 }), n);
+  const cab = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.55, 1.6), new THREE.MeshStandardMaterial({ color: 0x0d1013, roughness: 0.08, metalness: 0.4 }), n);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s1 = new THREE.Vector3(1, 1, 1), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
   cars.forEach((cr, i) => {
     const [X, Y, ang, , , r, g, b] = cr; const z = hAt(X, Y);
@@ -216,7 +321,7 @@ setProg(0.88);
     else { const k = 0.8, s = 1.7; cr_ = (luma + (r - luma) * s) * k; cg = (luma + (g - luma) * s) * k; cb = (luma + (b - luma) * s) * k; }
     c.setRGB(Math.max(.02, cr_), Math.max(.02, cg), Math.max(.02, cb), THREE.SRGBColorSpace); body.setColorAt(i, c);
   });
-  body.instanceColor.needsUpdate = true; scene.add(body, cab);
+  body.instanceColor.needsUpdate = true; body.castShadow = cab.castShadow = true; scene.add(body, cab);
   // flagsticks
   const fl = pins.flags, poleG = new THREE.CylinderGeometry(0.03, 0.025, 2.1, 5).translate(0, 1.05, 0);
   const poles = new THREE.InstancedMesh(poleG, new THREE.MeshLambertMaterial({ color: 0xf2f2ee }), fl.length);
@@ -288,11 +393,11 @@ $('#oLines').onchange = e => lines.visible = e.target.checked;
 $('#oLabels').onchange = e => labels.visible = e.target.checked;
 $('#oSpin').onchange = e => { controls.autoRotate = e.target.checked; controls.autoRotateSpeed = 0.6; };
 $('#tog').onclick = () => $('#panel').classList.remove('hide');
-$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
+$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
 
 // gallery
-const GAL = [['wide_south', 'Whole course, from the south'], ['hero1', 'Clubhouse, parking lot, pool and tennis courts']]
-  .concat(Array.from({ length: 18 }, (_, i) => ['hole' + String(i + 1).padStart(2, '0') + '_b', 'Hole ' + (i + 1) + ' — tee view']));
+const GAL = [['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]
+  .concat(Array.from({ length: 18 }, (_, i) => ['v2_hole' + String(i + 1).padStart(2, '0'), 'Hole ' + (i + 1) + ' — tee view']));
 const grid = $('#grid');
 for (const [f, cap] of GAL) { const fig = document.createElement('figure'); fig.innerHTML = `<img loading="lazy" src="/renders/${f}.jpg" alt="${cap}"><figcaption>${cap}</figcaption>`; fig.firstChild.onclick = () => { $('#lb img').src = `/renders/${f}.jpg`; $('#lb').classList.add('show'); }; grid.appendChild(fig); }
 gb.onclick = () => $('#gal').classList.add('show');
@@ -313,7 +418,7 @@ else setTimeout(() => { const v = presetView({ eye: [-220, -300, 160], tgt: [-10
 
 // ---------------------------------------------------------------- loop
 const ease = t => t < .5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-let last = performance.now();
+let last = performance.now(), frameN = 0;
 function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 controls.addEventListener('start', () => { flyState.t = 1; });
@@ -326,7 +431,8 @@ function frame(now) {
   // keep camera above ground
   const gy = hAt(camera.position.x, -camera.position.z) + 1.8; if (camera.position.y < gy) camera.position.y = gy;
   controls.update();
-  scene.userData.sky.position.copy(camera.position);
+  sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
+  if (++frameN % 8 === 0) trees.update(false);
   if (labels.visible) for (const sp of labels.children) { const d = sp.position.distanceTo(camera.position); const k = Math.min(Math.max(d * 0.03, 7), 38); sp.scale.set(k, k, 1); sp.material.opacity = d < 60 ? 0 : 1; }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

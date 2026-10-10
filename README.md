@@ -15,6 +15,8 @@ Interactive 3D model of the Cedar Rapids Country Club golf course (Cedar Rapids,
 - Buildings, cars, trees, pins: extracted from NAIP + OSM + hand tracing (`data/*.json`, `data/trees.bin`)
 - Web viewer: static site, no build step (`index.html`, `main.js`, vendored three.js r170)
 
+Textures and HDRI sky: ambientCG and Poly Haven (CC0). Trees and clubhouse modelled procedurally in Blender to match aerial imagery and photos.
+
 Data sources: USDA NAIP, USGS 3DEP, OpenStreetMap contributors (ODbL); course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.
 
 ## Run locally
