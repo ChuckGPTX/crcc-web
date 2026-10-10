@@ -8,7 +8,7 @@ const setProg = p => { progress = Math.max(progress, p); bar.style.width = (prog
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = $('#c');
-const MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 700;
+const MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 700 || location.search.includes('lite');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, MOBILE ? 1.5 : 2));
 renderer.toneMapping = THREE.AgXToneMapping;
@@ -141,7 +141,7 @@ const trees = (() => {
   const TB = new Float32Array(treesBuf), n = TB.length / 8;
   const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
   const crownG = new THREE.IcosahedronGeometry(1, 1), trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0), coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
-  const farMat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
+  const farMat = new THREE.MeshStandardMaterial({ roughness: 0.95, envMapIntensity: 0.5 });
   const crowns = new THREE.InstancedMesh(crownG, farMat, n), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x3e3226, roughness: 0.95 }), n), cones = new THREE.InstancedMesh(coneG, farMat, n);
   const pos = new Float32Array(n * 3), near = new Float32Array(n * 16), farA = new Float32Array(n * 16), farB = new Float32Array(n * 16);
   const variant = new Uint8Array(n), cols = new Float32Array(n * 3), tint = new Float32Array(n * 3);
@@ -155,14 +155,14 @@ const trees = (() => {
       ps.set(x, z, -y); sc.set(r / 3.2 * 1.05, h / 18, r / 3.2 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
       ps.set(x, z + h * 0.08, -y); sc.set(r * 0.85, h * 0.92, r * 0.85); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
       ps.set(x, z, -y); sc.set(0.25, h * 0.15, 0.25); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
-      col.setHSL(0.31 + rng() * 0.04, 0.35, 0.07 + rng() * 0.04);
+      col.setHSL(0.31 + rng() * 0.04, 0.38, 0.045 + rng() * 0.03);
     } else {
       variant[i] = (vr | 0) % 2;
       ps.set(x, z, -y); sc.set(r / 5.6 * 1.05, h / 16, r / 5.6 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
       const th = h * 0.5;
       ps.set(x, z + th * 0.9 + (h - th * 0.9) * 0.5, -y); sc.set(r, (h - th * 0.9) * 0.5 * 1.05, r); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
       ps.set(x, z, -y); sc.set(Math.max(0.18, r * 0.07), th, Math.max(0.18, r * 0.07)); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
-      col.setHSL(0.24 + rng() * 0.07, 0.40 + rng() * 0.1, 0.10 + rng() * 0.08);
+      col.setHSL(0.25 + rng() * 0.06, 0.45 + rng() * 0.1, 0.055 + rng() * 0.05);
     }
     col.toArray(cols, i * 3);
     const tv = 0.8 + rng() * 0.35; tint[i * 3] = tv * (0.95 + rng() * 0.1); tint[i * 3 + 1] = tv; tint[i * 3 + 2] = tv * (0.9 + rng() * 0.1);
