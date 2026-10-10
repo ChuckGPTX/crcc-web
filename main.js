@@ -75,11 +75,11 @@ const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // local meters (x east, y
   const S = 2;
   const cols = Math.floor((NX - 1) / S) + 1, rows = Math.floor((NY - 1) / S) + 1;
   const pos = new Float32Array(cols * rows * 3), uv = new Float32Array(cols * rows * 2);
-  const W = meta.x1 - meta.x0, H = meta.y1 - meta.y0;
+  const TX = meta.tex_x || [meta.x0, meta.x1], TY = meta.tex_y || [meta.y0, meta.y1];
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = meta.x0 + c * S * STEP, y = meta.y0 + r * S * STEP, k = r * cols + c;
     pos[k * 3] = x; pos[k * 3 + 1] = meta.zmin + HF[(r * S) * NX + c * S] / meta.zscale - ZO; pos[k * 3 + 2] = -y;
-    uv[k * 2] = (x - meta.x0) / W; uv[k * 2 + 1] = (y - meta.y0) / H;
+    uv[k * 2] = (x - TX[0]) / (TX[1] - TX[0]); uv[k * 2 + 1] = (y - TY[0]) / (TY[1] - TY[0]);
   }
   const idx = new Uint32Array((cols - 1) * (rows - 1) * 6); let n = 0;
   for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
@@ -466,10 +466,10 @@ setProg(1);
 // ---------------------------------------------------------------- camera presets + UI
 const views = {
   overview: { eye: [80, -980, 560], tgt: [0, -20, 0], name: 'Overview' },
-  clubhouse: { eye: [-345, 38, 55], tgt: [-262, 72], name: 'Clubhouse' },
-  clubrear: { eye: [-200, 34, 16], tgt: [-246, 70], name: 'Clubhouse rear' },
-  racquet: { eye: [-442, 22, 14], tgt: [-444, 80], name: 'Racquet club' },
-  parking: { eye: [-290, 20, 36], tgt: [-335, 90, 0], name: 'Parking' },
+  clubhouse: { eye: [-345, 43.5, 55], tgt: [-262, 83.3], name: 'Clubhouse' },
+  clubrear: { eye: [-200, 38.8, 16], tgt: [-246, 81], name: 'Clubhouse rear' },
+  racquet: { eye: [-442, 24.8, 14], tgt: [-444, 92.7], name: 'Racquet club' },
+  parking: { eye: [-290, 22.4, 36], tgt: [-335, 104.4, 0], name: 'Parking' },
   top: { eye: [0, -30, 1500], tgt: [0, -29.9, 0], name: 'Top-down' }
 };
 const flyState = { t: 1, a: null, b: null, dur: 2 };
