@@ -112,6 +112,46 @@ const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // local meters (x east, y
   const far = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7c8f62 }));
   far.position.y = -14; scene.add(far);
 }
+// ---------------------------------------------------------------- water: carved ponds + creek, depth-tinted, reflective, animated ripples
+const water = await (async () => {
+  const [wj, wb] = await Promise.all([fetchJSON('/data/water.json').catch(() => null), fetchBuf('/data/water.bin').catch(() => null)]);
+  if (!wj || !wb) return null;
+  const V = new Float32Array(wb, 0, wj.nv * 4), I = new Uint32Array(wb, wj.nv * 16, wj.nt * 3);
+  const pos = new Float32Array(wj.nv * 3), dep = new Float32Array(wj.nv);
+  for (let i = 0; i < wj.nv; i++) { pos[i * 3] = V[i * 4]; pos[i * 3 + 1] = V[i * 4 + 2]; pos[i * 3 + 2] = -V[i * 4 + 1]; dep[i] = V[i * 4 + 3]; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('wdepth', new THREE.BufferAttribute(dep, 1));
+  g.setIndex(new THREE.BufferAttribute(I, 1)); g.computeVertexNormals(); g.computeBoundingSphere();
+  const nmap = T('water_n.jpg', 1, false);
+  const uni = { uTime: { value: 0 }, uN: { value: nmap } };
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1, metalness: 0, transparent: true, depthWrite: false, side: THREE.DoubleSide, envMapIntensity: 1.35 });
+  m.onBeforeCompile = sh => {
+    Object.assign(sh.uniforms, uni);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float wdepth;\nvarying float vDepth;\nvarying vec3 vWPos;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvDepth = wdepth;\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vDepth;\nvarying vec3 vWPos;\nuniform float uTime;\nuniform sampler2D uN;')
+      .replace('#include <color_fragment>', `#include <color_fragment>
+      float dd = clamp(vDepth, 0.0, 3.0);
+      diffuseColor.rgb = mix(vec3(0.105, 0.096, 0.062), vec3(0.010, 0.020, 0.016), smoothstep(0.0, 1.3, dd));
+      float edge = smoothstep(-0.02, 0.07, vDepth);
+      diffuseColor.a = mix(0.42, 0.93, smoothstep(0.05, 1.0, dd));`)
+      .replace('#include <normal_fragment_maps>', `
+      {
+        vec3 n1 = texture2D(uN, vWPos.xz / 23.0 + uTime * vec2(0.008, 0.005)).xyz * 2.0 - 1.0;
+        vec3 n2 = texture2D(uN, vWPos.xz / 7.9 + uTime * vec2(-0.012, 0.009)).xyz * 2.0 - 1.0;
+        float calm = 0.55 + 0.45 * texture2D(uN, vWPos.xz / 160.0 + 0.3).x;
+        float fadeN = 1.0 - 0.75 * smoothstep(60.0, 450.0, length(vWPos - cameraPosition));
+        vec2 d = (n1.xy + n2.xy * 0.5) * 0.16 * calm * fadeN;
+        normal = normalize((viewMatrix * vec4(normalize(vec3(d.x, 1.0, d.y)), 0.0)).xyz);
+      }`)
+      .replace('#include <opaque_fragment>', `
+      float fr = pow(1.0 - clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), 4.0);
+      diffuseColor.a = clamp(diffuseColor.a + fr * 0.7, 0.0, 1.0) * edge;
+      #include <opaque_fragment>`);
+  };
+  const mesh = new THREE.Mesh(g, m); mesh.renderOrder = 2; mesh.receiveShadow = true; scene.add(mesh);
+  return { mesh, uni };
+})();
 setProg(0.65);
 
 // ---------------------------------------------------------------- trees (detailed near LOD + simple far LOD)
@@ -137,42 +177,73 @@ const TREE_MATS = {
   TreeNeedles: () => new THREE.MeshStandardMaterial({ map: T('needles.png'), alphaTest: 0.45, side: THREE.DoubleSide, roughness: 0.8 }),
 };
 const [ga0, ga1, gb0] = await Promise.all([loadGeo('Tree_a0'), loadGeo('Tree_a1'), loadGeo('Tree_b0')]);
+const IMP = { Tree_a0: { F: 16.97, cz: 8.0 }, Tree_a1: { F: 16.97, cz: 8.0 }, Tree_b0: { F: 19.11, cz: 8.99 } };
+const impTex = await loadTex('/tex/tree_imp.webp').catch(() => null);
+if (impTex) { impTex.colorSpace = THREE.SRGBColorSpace; impTex.anisotropy = 4; }
 const trees = (() => {
   const TB = new Float32Array(treesBuf), n = TB.length / 8;
   const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
-  const crownG = new THREE.IcosahedronGeometry(1, 2), coreG = new THREE.IcosahedronGeometry(0.82, 1), trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0), coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
-  const farMat = new THREE.MeshStandardMaterial({ roughness: 0.95, envMapIntensity: 0.5 });
-  // far-LOD crowns: leaf-textured shell with ragged alpha edge over a solid core, so distant trees read as foliage
-  const leafTex = T('twigA.png', 3);
-  const shellMat = new THREE.MeshStandardMaterial({ map: leafTex, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.85, envMapIntensity: 0.6 });
-  const crowns = new THREE.InstancedMesh(crownG, shellMat, n), cores = new THREE.InstancedMesh(coreG, farMat, n), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x3e3226, roughness: 0.95 }), n), cones = new THREE.InstancedMesh(coneG, farMat, n);
-  const pos = new Float32Array(n * 3), near = new Float32Array(n * 16), farA = new Float32Array(n * 16), farB = new Float32Array(n * 16);
-  const variant = new Uint8Array(n), cols = new Float32Array(n * 3), tint = new Float32Array(n * 3);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), Y = new THREE.Vector3(0, 1, 0);
+  const pos = new Float32Array(n * 3), near = new Float32Array(n * 16);
+  const variant = new Uint8Array(n), tint = new Float32Array(n * 3), isz = new Float32Array(n * 3);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
   for (let i = 0; i < n; i++) {
     const x = TB[i * 8], y = TB[i * 8 + 1], r = Math.max(1.4, TB[i * 8 + 3]), h = Math.max(4, TB[i * 8 + 4]), typ = TB[i * 8 + 5], rot = TB[i * 8 + 6], vr = TB[i * 8 + 7];
     const z = hAt(x, y) - 0.1; pos[i * 3] = x; pos[i * 3 + 1] = z; pos[i * 3 + 2] = -y;
     q.setFromAxisAngle(Y, rot);
-    if (typ > 0.5) {
-      variant[i] = 2;
-      ps.set(x, z, -y); sc.set(r / 3.2 * 1.05, h / 18, r / 3.2 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
-      ps.set(x, z + h * 0.08, -y); sc.set(r * 0.85, h * 0.92, r * 0.85); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
-      ps.set(x, z, -y); sc.set(0.25, h * 0.15, 0.25); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
-      col.setHSL(0.31 + rng() * 0.04, 0.38, 0.045 + rng() * 0.03);
-    } else {
-      variant[i] = (vr | 0) % 2;
-      ps.set(x, z, -y); sc.set(r / 5.6 * 1.05, h / 16, r / 5.6 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
-      const th = h * 0.3;
-      ps.set(x, z + th + (h - th) * 0.5, -y); sc.set(r * 1.02, (h - th) * 0.52, r * 1.02); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
-      ps.set(x, z, -y); sc.set(Math.max(0.18, r * 0.07), th, Math.max(0.18, r * 0.07)); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
-      col.setHSL(0.25 + rng() * 0.06, 0.45 + rng() * 0.1, 0.055 + rng() * 0.05);
-    }
-    col.toArray(cols, i * 3);
+    let sxy, sz, im;
+    if (typ > 0.5) { variant[i] = 2; sxy = r / 3.2 * 1.05; sz = h / 18; im = IMP.Tree_b0; }
+    else { variant[i] = (vr | 0) % 2; sxy = r / 5.6 * 1.05; sz = h / 16; im = variant[i] ? IMP.Tree_a1 : IMP.Tree_a0; }
+    ps.set(x, z, -y); sc.set(sxy, sz, sxy); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
+    isz[i * 3] = im.F * sxy; isz[i * 3 + 1] = im.F * sz; isz[i * 3 + 2] = im.cz * sz;
     const tv = 0.8 + rng() * 0.35; tint[i * 3] = tv * (0.95 + rng() * 0.1); tint[i * 3 + 1] = tv; tint[i * 3 + 2] = tv * (0.9 + rng() * 0.1);
   }
-  for (const o of [crowns, cores, trunks, cones]) { o.frustumCulled = false; o.count = 0; o.castShadow = true; treeGroup.add(o); }
-  crowns.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.3 });
-  crowns.setColorAt(0, col); cores.setColorAt(0, col); cones.setColorAt(0, col);
+  // far LOD: camera-facing impostors picked from an 8-bearing x 2-elevation atlas rendered in Blender under the same sun
+  const ig = new THREE.InstancedBufferGeometry(); ig.copy(new THREE.PlaneGeometry(1, 1));
+  const aPos = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3), aSize = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3), aVar = new THREE.InstancedBufferAttribute(new Float32Array(n), 1), aTint = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+  for (const a of [aPos, aSize, aVar, aTint]) a.setUsage(THREE.DynamicDrawUsage);
+  ig.setAttribute('iPos', aPos); ig.setAttribute('iSize', aSize); ig.setAttribute('iVar', aVar); ig.setAttribute('iTint', aTint); ig.instanceCount = 0;
+  const impMat = new THREE.ShaderMaterial({
+    uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog, { map: { value: null }, gain: { value: 2.15 }, sunDir: { value: new THREE.Vector3() } }]),
+    fog: true,
+    vertexShader: `
+      attribute vec3 iPos; attribute vec3 iSize; attribute float iVar; attribute vec3 iTint;
+      varying vec2 vUv; varying vec3 vTint;
+      #include <common>
+      #include <fog_pars_vertex>
+      void main() {
+        vec3 c = iPos + vec3(0.0, iSize.z, 0.0);
+        vec3 toCam = cameraPosition - c;
+        float elev = atan(toCam.y, length(toCam.xz));
+        float bearing = atan(toCam.x, toCam.z * -1.0);
+        float k = mod(floor(bearing / (PI * 0.25) + 0.5) + 8.0, 8.0);
+        float row = elev > 0.57 ? 1.0 : 0.0;
+        vec3 f = normalize(toCam);
+        vec3 r = normalize(cross(vec3(0.0, 1.0, 0.0), f));
+        vec3 u = row > 0.5 ? cross(f, r) : vec3(0.0, 1.0, 0.0);
+        vec3 wp = c + r * position.x * iSize.x + u * position.y * iSize.y;
+        if (row > 0.5) wp += f * iSize.y * 0.25;
+        vUv = vec2((k + position.x + 0.5) / 8.0, (5.0 - (iVar * 2.0 + row) + position.y + 0.5) / 6.0);
+        vTint = iTint;
+        vec4 mvPosition = viewMatrix * vec4(wp, 1.0);
+        gl_Position = projectionMatrix * mvPosition;
+        #include <fog_vertex>
+      }`,
+    fragmentShader: `
+      uniform sampler2D map; uniform float gain;
+      varying vec2 vUv; varying vec3 vTint;
+      #include <common>
+      #include <fog_pars_fragment>
+      void main() {
+        vec4 t = texture2D(map, vUv);
+        if (t.a < 0.5) discard;
+        gl_FragColor = vec4(t.rgb * gain * vTint, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        #include <fog_fragment>
+      }`
+  });
+  impMat.uniforms.map.value = impTex;
+  const imps = new THREE.Mesh(ig, impMat); imps.frustumCulled = false; treeGroup.add(imps);
   // near meshes per variant: [bark, leaves]
   const nearSets = [ga0, ga1, gb0].map(gs => {
     if (!gs) return null;
@@ -192,7 +263,8 @@ const trees = (() => {
     lastCam.copy(camera.position);
     const cx = camera.position.x, cz = camera.position.z, cy = camera.position.y;
     const R2 = R_NEAR * R_NEAR;
-    const cnt = [0, 0, 0]; let fa = 0, fc = 0, ft = 0;
+    const cnt = [0, 0, 0]; let fa = 0;
+    const AP = aPos.array, AS = aSize.array, AV = aVar.array, AT = aTint.array;
     for (let i = 0; i < n; i++) {
       const dx = pos[i * 3] - cx, dz = pos[i * 3 + 2] - cz, dy = pos[i * 3 + 1] - cy;
       const v = variant[i], set = nearSets[v];
@@ -202,20 +274,16 @@ const trees = (() => {
           im.instanceMatrix.array.set(near.subarray(i * 16, i * 16 + 16), k * 16);
           if (im.instanceColor) { im.instanceColor.array[k * 3] = tint[i * 3]; im.instanceColor.array[k * 3 + 1] = tint[i * 3 + 1]; im.instanceColor.array[k * 3 + 2] = tint[i * 3 + 2]; }
         }
-      } else if (v === 2) {
-        cones.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fc * 16); cones.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fc * 3); fc++;
-        trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
       } else {
-        crowns.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16); cores.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16);
-        crowns.instanceColor.array.set(tint.subarray(i * 3, i * 3 + 3), fa * 3); cores.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fa * 3); fa++;
-        trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
+        AP[fa * 3] = pos[i * 3]; AP[fa * 3 + 1] = pos[i * 3 + 1]; AP[fa * 3 + 2] = pos[i * 3 + 2];
+        AS[fa * 3] = isz[i * 3]; AS[fa * 3 + 1] = isz[i * 3 + 1]; AS[fa * 3 + 2] = isz[i * 3 + 2];
+        AV[fa] = v; AT[fa * 3] = tint[i * 3]; AT[fa * 3 + 1] = tint[i * 3 + 1]; AT[fa * 3 + 2] = tint[i * 3 + 2]; fa++;
       }
     }
     nearSets.forEach((set, v) => set && set.forEach(im => { im.count = cnt[v]; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }));
-    crowns.count = fa; cores.count = fa; cones.count = fc; trunks.count = ft;
-    for (const o of [crowns, cores, cones, trunks]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; }
+    ig.instanceCount = fa; for (const a of [aPos, aSize, aVar, aTint]) a.needsUpdate = true;
   }
-  return { update };
+  return { update, imps, impMat };
 })();
 trees.update(true);
 setProg(0.8);
@@ -398,10 +466,10 @@ $('#oLines').onchange = e => lines.visible = e.target.checked;
 $('#oLabels').onchange = e => labels.visible = e.target.checked;
 $('#oSpin').onchange = e => { controls.autoRotate = e.target.checked; controls.autoRotateSpeed = 0.6; };
 $('#tog').onclick = () => $('#panel').classList.remove('hide');
-$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
+$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0). Clear-water creek setup inspired by "Realistic Creek" by devmishra1234 (Blendswap, CC0). Parking-lot cars in the renders: "VW Golf MK4" by Jay-Artist (Blendswap, CC-BY 3.0).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
 
 // gallery
-const GAL = [['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]
+const GAL = [['v3_pond', 'Pond on the back nine — carved basin, clear water, reflections'], ['v3_creek', 'Creek bank, bunker and reeds'], ['v3_club_golden', 'Clubhouse at golden hour'], ['v3_club_blue', 'Clubhouse at blue hour, lights on'], ['v3_parking', 'Parking lot and tennis courts'], ['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]
   .concat(Array.from({ length: 18 }, (_, i) => ['v2_hole' + String(i + 1).padStart(2, '0'), 'Hole ' + (i + 1) + ' — tee view']));
 const grid = $('#grid');
 for (const [f, cap] of GAL) { const fig = document.createElement('figure'); fig.innerHTML = `<img loading="lazy" src="/renders/${f}.jpg" alt="${cap}"><figcaption>${cap}</figcaption>`; fig.firstChild.onclick = () => { $('#lb img').src = `/renders/${f}.jpg`; $('#lb').classList.add('show'); }; grid.appendChild(fig); }
@@ -438,6 +506,7 @@ function frame(now) {
   controls.update();
   sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
   if (++frameN % 8 === 0) trees.update(false);
+  if (water) water.uni.uTime.value = now / 1000;
   if (labels.visible) for (const sp of labels.children) { const d = sp.position.distanceTo(camera.position); const k = Math.min(Math.max(d * 0.03, 7), 38); sp.scale.set(k, k, 1); sp.material.opacity = d < 60 ? 0 : 1; }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
