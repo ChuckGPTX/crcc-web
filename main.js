@@ -140,9 +140,12 @@ const [ga0, ga1, gb0] = await Promise.all([loadGeo('Tree_a0'), loadGeo('Tree_a1'
 const trees = (() => {
   const TB = new Float32Array(treesBuf), n = TB.length / 8;
   const rng = (() => { let s = 7; return () => (s = (s * 16807) % 2147483647) / 2147483647; })();
-  const crownG = new THREE.IcosahedronGeometry(1, 1), trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0), coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
+  const crownG = new THREE.IcosahedronGeometry(1, 2), coreG = new THREE.IcosahedronGeometry(0.82, 1), trunkG = new THREE.CylinderGeometry(0.7, 1, 1, 6).translate(0, 0.5, 0), coneG = new THREE.ConeGeometry(1, 1, 8).translate(0, 0.5, 0);
   const farMat = new THREE.MeshStandardMaterial({ roughness: 0.95, envMapIntensity: 0.5 });
-  const crowns = new THREE.InstancedMesh(crownG, farMat, n), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x3e3226, roughness: 0.95 }), n), cones = new THREE.InstancedMesh(coneG, farMat, n);
+  // far-LOD crowns: leaf-textured shell with ragged alpha edge over a solid core, so distant trees read as foliage
+  const leafTex = T('twigA.png', 3);
+  const shellMat = new THREE.MeshStandardMaterial({ map: leafTex, alphaTest: 0.3, side: THREE.DoubleSide, roughness: 0.85, envMapIntensity: 0.6 });
+  const crowns = new THREE.InstancedMesh(crownG, shellMat, n), cores = new THREE.InstancedMesh(coreG, farMat, n), trunks = new THREE.InstancedMesh(trunkG, new THREE.MeshStandardMaterial({ color: 0x3e3226, roughness: 0.95 }), n), cones = new THREE.InstancedMesh(coneG, farMat, n);
   const pos = new Float32Array(n * 3), near = new Float32Array(n * 16), farA = new Float32Array(n * 16), farB = new Float32Array(n * 16);
   const variant = new Uint8Array(n), cols = new Float32Array(n * 3), tint = new Float32Array(n * 3);
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color(), Y = new THREE.Vector3(0, 1, 0);
@@ -159,16 +162,17 @@ const trees = (() => {
     } else {
       variant[i] = (vr | 0) % 2;
       ps.set(x, z, -y); sc.set(r / 5.6 * 1.05, h / 16, r / 5.6 * 1.05); m4.compose(ps, q, sc); m4.toArray(near, i * 16);
-      const th = h * 0.5;
-      ps.set(x, z + th * 0.9 + (h - th * 0.9) * 0.5, -y); sc.set(r, (h - th * 0.9) * 0.5 * 1.05, r); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
+      const th = h * 0.3;
+      ps.set(x, z + th + (h - th) * 0.5, -y); sc.set(r * 1.02, (h - th) * 0.52, r * 1.02); m4.compose(ps, q, sc); m4.toArray(farA, i * 16);
       ps.set(x, z, -y); sc.set(Math.max(0.18, r * 0.07), th, Math.max(0.18, r * 0.07)); m4.compose(ps, q, sc); m4.toArray(farB, i * 16);
       col.setHSL(0.25 + rng() * 0.06, 0.45 + rng() * 0.1, 0.055 + rng() * 0.05);
     }
     col.toArray(cols, i * 3);
     const tv = 0.8 + rng() * 0.35; tint[i * 3] = tv * (0.95 + rng() * 0.1); tint[i * 3 + 1] = tv; tint[i * 3 + 2] = tv * (0.9 + rng() * 0.1);
   }
-  for (const o of [crowns, trunks, cones]) { o.frustumCulled = false; o.count = 0; o.castShadow = true; treeGroup.add(o); }
-  crowns.setColorAt(0, col); cones.setColorAt(0, col);
+  for (const o of [crowns, cores, trunks, cones]) { o.frustumCulled = false; o.count = 0; o.castShadow = true; treeGroup.add(o); }
+  crowns.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: leafTex, alphaTest: 0.3 });
+  crowns.setColorAt(0, col); cores.setColorAt(0, col); cones.setColorAt(0, col);
   // near meshes per variant: [bark, leaves]
   const nearSets = [ga0, ga1, gb0].map(gs => {
     if (!gs) return null;
@@ -182,7 +186,7 @@ const trees = (() => {
       treeGroup.add(im); return im;
     });
   });
-  const R_NEAR = MOBILE ? 140 : 210, lastCam = new THREE.Vector3(1e9, 0, 0);
+  const R_NEAR = +(new URLSearchParams(location.search).get('near')) || (MOBILE ? 140 : 210), lastCam = new THREE.Vector3(1e9, 0, 0);
   function update(force) {
     if (!force && lastCam.distanceToSquared(camera.position) < 36) return;
     lastCam.copy(camera.position);
@@ -202,13 +206,14 @@ const trees = (() => {
         cones.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fc * 16); cones.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fc * 3); fc++;
         trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
       } else {
-        crowns.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16); crowns.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fa * 3); fa++;
+        crowns.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16); cores.instanceMatrix.array.set(farA.subarray(i * 16, i * 16 + 16), fa * 16);
+        crowns.instanceColor.array.set(tint.subarray(i * 3, i * 3 + 3), fa * 3); cores.instanceColor.array.set(cols.subarray(i * 3, i * 3 + 3), fa * 3); fa++;
         trunks.instanceMatrix.array.set(farB.subarray(i * 16, i * 16 + 16), ft * 16); ft++;
       }
     }
     nearSets.forEach((set, v) => set && set.forEach(im => { im.count = cnt[v]; im.instanceMatrix.needsUpdate = true; if (im.instanceColor) im.instanceColor.needsUpdate = true; }));
-    crowns.count = fa; cones.count = fc; trunks.count = ft;
-    for (const o of [crowns, cones, trunks]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; }
+    crowns.count = fa; cores.count = fa; cones.count = fc; trunks.count = ft;
+    for (const o of [crowns, cores, cones, trunks]) { o.instanceMatrix.needsUpdate = true; if (o.instanceColor) o.instanceColor.needsUpdate = true; }
   }
   return { update };
 })();
@@ -438,4 +443,4 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-window.__crcc = { scene, camera, controls, setView, presetView, holeView, hAt };
+window.__crcc = { scene, camera, controls, setView, presetView, holeView, hAt, renderer, trees, labels, sun, SUN_DIR };
