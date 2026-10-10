@@ -349,6 +349,9 @@ const CH_MATS = {
   CH_CartBody: () => new THREE.MeshStandardMaterial({ color: 0xdcd8cc, roughness: 0.4 }),
   CH_Seat: () => new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.6 }),
   CH_Stucco: () => new THREE.MeshStandardMaterial({ color: 0xcfc4b0, roughness: 0.85 }),
+  CH_BarnRed: () => new THREE.MeshStandardMaterial({ map: T('siding.jpg', 1 / 2.4), color: 0xa8281c, roughness: 0.75 }),
+  CH_BlackFrame: () => new THREE.MeshStandardMaterial({ color: 0x0b0b0c, roughness: 0.4 }),
+  CH_MetalRoof: () => new THREE.MeshStandardMaterial({ color: 0x5f6266, roughness: 0.6, metalness: 0.1 }),
 };
 const chGeo = await loadGeo('clubhouse');
 if (chGeo) for (const g of chGeo) {
@@ -443,7 +446,8 @@ setProg(1);
 // ---------------------------------------------------------------- camera presets + UI
 const views = {
   overview: { eye: [80, -980, 560], tgt: [0, -20, 0], name: 'Overview' },
-  clubhouse: { eye: [-170, -10, 60], tgt: [-265, 85, 4], name: 'Clubhouse' },
+  clubhouse: { eye: [-345, 38, 55], tgt: [-262, 72], name: 'Clubhouse' },
+  clubrear: { eye: [-200, 34, 16], tgt: [-246, 70], name: 'Clubhouse rear' },
   parking: { eye: [-290, 20, 36], tgt: [-335, 90, 0], name: 'Parking' },
   top: { eye: [0, -30, 1500], tgt: [0, -29.9, 0], name: 'Top-down' }
 };

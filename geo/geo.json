@@ -2,73 +2,88 @@
  "clubhouse": [
   {
    "mat": "CH_Brick",
-   "count": 306,
+   "count": 270,
    "offset": 0
   },
   {
    "mat": "CH_Limestone",
-   "count": 6834,
-   "offset": 9792
+   "count": 10218,
+   "offset": 8640
   },
   {
    "mat": "CH_Trim",
-   "count": 52029,
-   "offset": 228480
+   "count": 58554,
+   "offset": 335616
   },
   {
    "mat": "CH_Glass",
-   "count": 1068,
-   "offset": 1893408
-  },
-  {
-   "mat": "CH_Stucco",
-   "count": 54,
-   "offset": 1927584
-  },
-  {
-   "mat": "CH_Shingle",
-   "count": 177,
-   "offset": 1929312
-  },
-  {
-   "mat": "CH_Siding",
-   "count": 12,
-   "offset": 1934976
-  },
-  {
-   "mat": "CH_Concrete",
-   "count": 78,
-   "offset": 1935360
-  },
-  {
-   "mat": "CH_Membrane",
-   "count": 6,
-   "offset": 1937856
-  },
-  {
-   "mat": "CH_Mulch",
-   "count": 6,
-   "offset": 1938048
+   "count": 954,
+   "offset": 2209344
   },
   {
    "mat": "CH_Metal",
    "count": 2232,
-   "offset": 1938240
+   "offset": 2239872
+  },
+  {
+   "mat": "CH_BlackFrame",
+   "count": 1620,
+   "offset": 2311296
+  },
+  {
+   "mat": "CH_BarnRed",
+   "count": 42,
+   "offset": 2363136
+  },
+  {
+   "mat": "CH_Concrete",
+   "count": 42,
+   "offset": 2364480
+  },
+  {
+   "mat": "CH_Stucco",
+   "count": 54,
+   "offset": 2365824
+  },
+  {
+   "mat": "CH_Shingle",
+   "count": 399,
+   "offset": 2367552
+  },
+  {
+   "mat": "CH_Siding",
+   "count": 12,
+   "offset": 2380320
+  },
+  {
+   "mat": "CH_Membrane",
+   "count": 6,
+   "offset": 2380704
+  },
+  {
+   "mat": "CH_MetalRoof",
+   "count": 48,
+   "offset": 2380896
+  },
+  {
+   "mat": "CH_Mulch",
+   "count": 6,
+   "offset": 2382432
   },
   {
    "mat": "CH_Canvas",
    "count": 48,
-   "offset": 2009664
+   "offset": 2382624
   },
   {
    "mat": "CH_CartBody",
-   "count": 720,
-   "offset": 2011200
+   "count": 648,
+   "offset": 2384160
   },
   {
    "mat": "CH_Seat",
-   "count": 2160,
-   "offset": 2034240
+   "count": 1944,
+   "offset": 2404896
   }
  ],
  "Tree_a0": [
