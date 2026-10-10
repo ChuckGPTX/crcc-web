@@ -378,23 +378,33 @@ setProg(0.88);
 
 // ---------------------------------------------------------------- cars, pins, tee markers
 {
-  const n = cars.length;
-  const body = new THREE.InstancedMesh(new THREE.BoxGeometry(4.4, 0.7, 1.82), new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.5 }), n);
-  const cab = new THREE.InstancedMesh(new THREE.BoxGeometry(2.3, 0.55, 1.6), new THREE.MeshStandardMaterial({ color: 0x0d1013, roughness: 0.08, metalness: 0.4 }), n);
-  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), s1 = new THREE.Vector3(1, 1, 1), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
-  cars.forEach((cr, i) => {
-    const [X, Y, ang, , , r, g, b] = cr; const z = hAt(X, Y);
-    q.setFromAxisAngle(up, ang * Math.PI / 180);
-    m4.compose(new THREE.Vector3(X, z + 0.55, -Y), q, s1); body.setMatrixAt(i, m4);
-    const o = new THREE.Vector3(-0.15, 0.6, 0).applyQuaternion(q);
-    m4.compose(new THREE.Vector3(X + o.x, z + 0.55 + o.y, -Y + o.z), q, s1); cab.setMatrixAt(i, m4);
-    const luma = 0.3 * r + 0.59 * g + 0.11 * b; let cr_, cg, cb;
-    if (luma > 0.62) { cr_ = 0.85; cg = 0.85; cb = 0.86; }
-    else if (luma < 0.26) { cr_ = 0.04; cg = 0.045; cb = 0.05; }
-    else { const k = 0.8, s = 1.7; cr_ = (luma + (r - luma) * s) * k; cg = (luma + (g - luma) * s) * k; cb = (luma + (b - luma) * s) * k; }
-    c.setRGB(Math.max(.02, cr_), Math.max(.02, cg), Math.max(.02, cb), THREE.SRGBColorSpace); body.setColorAt(i, c);
-  });
-  body.instanceColor.needsUpdate = true; body.castShadow = cab.castShadow = true; scene.add(body, cab);
+  // parked cars: low-poly CC-BY model (Blendswap #20760), positions/models/colours from the Blender scene
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), c = new THREE.Color(), up = new THREE.Vector3(0, 1, 0);
+  const carGeo = await loadGeo('car'); const cars2 = await fetchJSON('/data/cars2.json').catch(() => []);
+  const PAL = [[0.24, [0.80, 0.80, 0.79]], [0.19, [0.018, 0.018, 0.02]], [0.17, [0.20, 0.21, 0.22]], [0.14, [0.48, 0.49, 0.50]], [0.09, [0.025, 0.05, 0.13]], [0.07, [0.36, 0.025, 0.02]], [0.04, [0.06, 0.10, 0.07]], [0.04, [0.42, 0.38, 0.31]], [0.02, [0.10, 0.12, 0.16]]];
+  const pick = r => { let acc = 0; for (const [w, col] of PAL) { acc += w; if (r < acc) return col; } return PAL[0][1]; };
+  const CAR_MATS = { 'Red Car.001': () => new THREE.MeshPhysicalMaterial({ roughness: 0.3, metalness: 0.3, clearcoat: 1, clearcoatRoughness: 0.05 }),
+    Windows: () => new THREE.MeshStandardMaterial({ color: 0x0b0e12, roughness: 0.05, metalness: 0.2, envMapIntensity: 1.4 }),
+    'Car Light': () => new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.2 }), Grey: () => new THREE.MeshStandardMaterial({ color: 0x6b6b6b, roughness: 0.5, metalness: 0.6 }),
+    Reflect: () => new THREE.MeshStandardMaterial({ color: 0xbfbfbf, roughness: 0.2, metalness: 1 }) };
+  if (carGeo && cars2.length) for (const g of carGeo) {
+    const mat = (CAR_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.8 })))();
+    const im = new THREE.InstancedMesh(g.geo, mat, cars2.length); im.castShadow = true; im.receiveShadow = true;
+    cars2.forEach(([X, Y, ang, kind, L, r], i) => {
+      q.setFromAxisAngle(up, ang * Math.PI / 180); const s = L / 4.1;
+      m4.compose(new THREE.Vector3(X, hAt(X, Y), -Y), q, new THREE.Vector3(s, s * (kind === 'pickup' || kind.includes('suv') ? 1.08 : 1), s)); im.setMatrixAt(i, m4);
+      if (g.mat === 'Red Car.001') { const col = pick(r); c.setRGB(col[0], col[1], col[2], THREE.LinearSRGBColorSpace); im.setColorAt(i, c); }
+    });
+    scene.add(im);
+  }
+  // white bridges, parking-lot paint, curbs and light poles
+  const exGeo = await loadGeo('extras');
+  const EX_MATS = { BridgeWhite: () => new THREE.MeshStandardMaterial({ color: 0xececE6, roughness: 0.45 }), BridgeDeck: () => new THREE.MeshStandardMaterial({ color: 0x807c74, roughness: 0.85 }),
+    BridgeCable: () => new THREE.MeshStandardMaterial({ color: 0x28282a, roughness: 0.4, metalness: 0.8 }), LinePaint: () => new THREE.MeshStandardMaterial({ color: 0xd8d8d2, roughness: 0.8, polygonOffset: true, polygonOffsetFactor: -2 }) };
+  if (exGeo) for (const g of exGeo) {
+    const mat = (EX_MATS[g.mat] || CH_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x999999 })))(); mat.side = THREE.DoubleSide;
+    const m = new THREE.Mesh(g.geo, mat); m.castShadow = g.mat !== 'LinePaint'; m.receiveShadow = true; scene.add(m);
+  }
   // flagsticks
   const fl = pins.flags, poleG = new THREE.CylinderGeometry(0.03, 0.025, 2.1, 5).translate(0, 1.05, 0);
   const poles = new THREE.InstancedMesh(poleG, new THREE.MeshLambertMaterial({ color: 0xf2f2ee }), fl.length);
@@ -466,10 +476,10 @@ $('#oLines').onchange = e => lines.visible = e.target.checked;
 $('#oLabels').onchange = e => labels.visible = e.target.checked;
 $('#oSpin').onchange = e => { controls.autoRotate = e.target.checked; controls.autoRotateSpeed = 0.6; };
 $('#tog').onclick = () => $('#panel').classList.remove('hide');
-$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0). Clear-water creek setup inspired by "Realistic Creek" by devmishra1234 (Blendswap, CC0). Parking-lot cars in the renders: "VW Golf MK4" by Jay-Artist (Blendswap, CC-BY 3.0).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
+$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0). Clear-water creek setup inspired by "Realistic Creek" by devmishra1234 (Blendswap, CC0). Cars: "VW Golf MK4" by Jay-Artist, "Chevrolet Impala 2009" and "Crown Victoria Sedan 2011" by MAC2001, "mercedes amg 63ML", "SUV", "Low Poly Hatchback Car" and "Golf Cart" (Blendswap, CC-BY 3.0); Chevrolet Pickup, crooked oaks, park bench, reeds, lamp post, grass field (Blendswap, CC0). Suspension-bridge reference: Blendswap #5794 (CC-BY).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
 
 // gallery
-const GAL = [['v3_pond', 'Pond on the back nine — carved basin, clear water, reflections'], ['v3_creek', 'Creek bank, bunker and reeds'], ['v3_club_golden', 'Clubhouse at golden hour'], ['v3_club_blue', 'Clubhouse at blue hour, lights on'], ['v3_parking', 'Parking lot and tennis courts'], ['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]
+const GAL = [['v4_bunker', 'Ross-style bunker: steep grass face, raked sand'], ['v4_bridge', 'White suspension bridge over Indian Creek'], ['v4_bridge2', 'Second suspension bridge and creek'], ['v4_aerial', 'Clubhouse, pool and parking from above'], ['v4_club_rear', 'Clubhouse rear addition'], ['v4_parking', 'Parking lot'], ['v3_pond', 'Pond on the back nine — carved basin, clear water, reflections'], ['v3_creek', 'Creek bank, bunker and reeds'], ['v3_club_golden', 'Clubhouse at golden hour'], ['v3_club_blue', 'Clubhouse at blue hour, lights on'], ['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]
   .concat(Array.from({ length: 18 }, (_, i) => ['v2_hole' + String(i + 1).padStart(2, '0'), 'Hole ' + (i + 1) + ' — tee view']));
 const grid = $('#grid');
 for (const [f, cap] of GAL) { const fig = document.createElement('figure'); fig.innerHTML = `<img loading="lazy" src="/renders/${f}.jpg" alt="${cap}"><figcaption>${cap}</figcaption>`; fig.firstChild.onclick = () => { $('#lb img').src = `/renders/${f}.jpg`; $('#lb').classList.add('show'); }; grid.appendChild(fig); }

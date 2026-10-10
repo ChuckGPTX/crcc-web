@@ -74,25 +74,25 @@
  "Tree_a0": [
   {
    "mat": "TreeBarkOak",
-   "count": 6432,
+   "count": 6000,
    "offset": 0
   },
   {
    "mat": "TreeLeafA",
-   "count": 3156,
-   "offset": 205824
+   "count": 9078,
+   "offset": 192000
   }
  ],
  "Tree_a1": [
   {
    "mat": "TreeBarkOak",
-   "count": 6360,
+   "count": 5880,
    "offset": 0
   },
   {
    "mat": "TreeLeafB",
-   "count": 3156,
-   "offset": 203520
+   "count": 9726,
+   "offset": 188160
   }
  ],
  "Tree_b0": [
@@ -105,6 +105,85 @@
    "mat": "TreeNeedles",
    "count": 2526,
    "offset": 494592
+  }
+ ],
+ "extras": [
+  {
+   "mat": "BridgeDeck",
+   "count": 2700,
+   "offset": 0
+  },
+  {
+   "mat": "BridgeWhite",
+   "count": 19728,
+   "offset": 86400
+  },
+  {
+   "mat": "CH_Concrete",
+   "count": 3726,
+   "offset": 717696
+  },
+  {
+   "mat": "BridgeCable",
+   "count": 7056,
+   "offset": 836928
+  },
+  {
+   "mat": "LinePaint",
+   "count": 3180,
+   "offset": 1062720
+  },
+  {
+   "mat": "CH_Metal",
+   "count": 1080,
+   "offset": 1164480
+  }
+ ],
+ "car": [
+  {
+   "mat": "Tyre",
+   "count": 2904,
+   "offset": 0
+  },
+  {
+   "mat": "Inner Inner Tyre",
+   "count": 3192,
+   "offset": 92928
+  },
+  {
+   "mat": "Inner Tyre",
+   "count": 552,
+   "offset": 195072
+  },
+  {
+   "mat": "Red Car.001",
+   "count": 3066,
+   "offset": 212736
+  },
+  {
+   "mat": "Car Light",
+   "count": 120,
+   "offset": 310848
+  },
+  {
+   "mat": "Grey",
+   "count": 1368,
+   "offset": 314688
+  },
+  {
+   "mat": "Windows",
+   "count": 72,
+   "offset": 358464
+  },
+  {
+   "mat": "Grill",
+   "count": 60,
+   "offset": 360768
+  },
+  {
+   "mat": "Reflect",
+   "count": 12,
+   "offset": 362688
   }
  ]
 }
