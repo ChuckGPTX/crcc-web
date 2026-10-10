@@ -408,6 +408,26 @@ setProg(0.88);
     const mat = (EX_MATS[g.mat] || CH_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x999999 })))(); mat.side = THREE.DoubleSide;
     const m = new THREE.Mesh(g.geo, mat); m.castShadow = g.mat !== 'LinePaint'; m.receiveShadow = true; scene.add(m);
   }
+  // reference-photo details: flagpole, drive fence, globe lamps, awnings, terraces, racquet club + courts, parkway fence, poles, range targets, golf carts
+  const ex2 = await loadGeo('extras2');
+  const cut = (tex, col, extra = {}) => new THREE.MeshStandardMaterial({ map: T(tex, 1), color: col, alphaTest: 0.45, roughness: 0.5, metalness: 0.4, ...extra });
+  const X2 = {
+    X2_Iron: () => cut('fence_iron.png', 0x161616), X2_Chain: () => cut('chainlink.png', 0x1a1a1a),
+    X2_Flag: () => new THREE.MeshStandardMaterial({ map: T('flag.png', 1), roughness: 0.8 }), X2_Awning: () => new THREE.MeshStandardMaterial({ map: T('awning.png', 1), roughness: 0.85 }),
+    X2_AwnGreen: () => new THREE.MeshStandardMaterial({ color: 0x0f3a24, roughness: 0.85 }), X2_CourtBlue: () => new THREE.MeshStandardMaterial({ color: 0x3a6fb5, roughness: 0.75 }),
+    X2_CourtDark: () => new THREE.MeshStandardMaterial({ color: 0x1f3c78, roughness: 0.75 }), X2_Line: () => new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.7, polygonOffset: true, polygonOffsetFactor: -2 }),
+    X2_Globe: () => new THREE.MeshStandardMaterial({ color: 0xf4f2ec, emissive: 0xfff4e0, emissiveIntensity: 0.35, roughness: 0.2 }),
+    X2_Black: () => new THREE.MeshStandardMaterial({ color: 0x111112, roughness: 0.4, metalness: 0.6 }), X2_White: () => new THREE.MeshStandardMaterial({ color: 0xe8e8e4, roughness: 0.45 }),
+    X2_Pole: () => new THREE.MeshStandardMaterial({ color: 0x5a4632, roughness: 0.9 }), X2_Wire: () => new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.5 }),
+    X2_Target: () => new THREE.MeshStandardMaterial({ color: 0x4e7a32, roughness: 0.8 }), X2_FlagR: () => new THREE.MeshStandardMaterial({ color: 0xc81e1e }),
+    X2_FlagY: () => new THREE.MeshStandardMaterial({ color: 0xe6b81a }), X2_FlagB: () => new THREE.MeshStandardMaterial({ color: 0x1e44b4 }),
+    X2_Gold: () => new THREE.MeshStandardMaterial({ color: 0xd8a640, roughness: 0.3, metalness: 1 }), X2_Bloom: () => new THREE.MeshStandardMaterial({ color: 0xc8202a, roughness: 0.8 }),
+    X2_Plant: () => new THREE.MeshStandardMaterial({ color: 0x3e5e22, roughness: 0.8 })
+  };
+  if (ex2) for (const g of ex2) {
+    const mat = (X2[g.mat] || CH_MATS[g.mat] || (() => new THREE.MeshStandardMaterial({ color: 0x999999 })))(); mat.side = THREE.DoubleSide;
+    const m = new THREE.Mesh(g.geo, mat); m.castShadow = g.mat !== 'X2_Line'; m.receiveShadow = true; scene.add(m);
+  }
   // flagsticks
   const fl = pins.flags, poleG = new THREE.CylinderGeometry(0.03, 0.025, 2.1, 5).translate(0, 1.05, 0);
   const poles = new THREE.InstancedMesh(poleG, new THREE.MeshLambertMaterial({ color: 0xf2f2ee }), fl.length);
@@ -448,6 +468,7 @@ const views = {
   overview: { eye: [80, -980, 560], tgt: [0, -20, 0], name: 'Overview' },
   clubhouse: { eye: [-345, 38, 55], tgt: [-262, 72], name: 'Clubhouse' },
   clubrear: { eye: [-200, 34, 16], tgt: [-246, 70], name: 'Clubhouse rear' },
+  racquet: { eye: [-442, 22, 14], tgt: [-444, 80], name: 'Racquet club' },
   parking: { eye: [-290, 20, 36], tgt: [-335, 90, 0], name: 'Parking' },
   top: { eye: [0, -30, 1500], tgt: [0, -29.9, 0], name: 'Top-down' }
 };
@@ -480,7 +501,7 @@ $('#oLines').onchange = e => lines.visible = e.target.checked;
 $('#oLabels').onchange = e => labels.visible = e.target.checked;
 $('#oSpin').onchange = e => { controls.autoRotate = e.target.checked; controls.autoRotateSpeed = 0.6; };
 $('#tog').onclick = () => $('#panel').classList.remove('hide');
-$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0). Clear-water creek setup inspired by "Realistic Creek" by devmishra1234 (Blendswap, CC0). Cars: "VW Golf MK4" by Jay-Artist, "Chevrolet Impala 2009" and "Crown Victoria Sedan 2011" by MAC2001, "mercedes amg 63ML", "SUV", "Low Poly Hatchback Car" and "Golf Cart" (Blendswap, CC-BY 3.0); Chevrolet Pickup, crooked oaks, park bench, reeds, lamp post, grass field (Blendswap, CC0). Suspension-bridge reference: Blendswap #5794 (CC-BY).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
+$('#about').onclick = () => alert('Sources: USDA NAIP aerial imagery · USGS 3DEP elevation · OpenStreetMap contributors (ODbL) · course facts from GolfPass, Stymie, Golf Club Atlas, The Fried Egg, Corridor Business Journal and the USGA.\n\nTextures and sky: ambientCG and Poly Haven (CC0). Clear-water creek setup inspired by "Realistic Creek" by devmishra1234 (Blendswap, CC0). Cars: "VW Golf MK4" by Jay-Artist, "Chevrolet Impala 2009" and "Crown Victoria Sedan 2011" by MAC2001, "mercedes amg 63ML", "SUV", "Low Poly Hatchback Car" and "Golf Cart" (Blendswap, CC-BY 3.0); Chevrolet Pickup, crooked oaks, park bench, reeds, lamp post, grass field, chain-link fence by mrzeon (Blendswap, CC0). Suspension-bridge reference: Blendswap #5794 (CC-BY).\n\nModel built with Blender + three.js. An approximation of the real course, not survey-exact.');
 
 // gallery
 const GAL = [['v4_bunker', 'Ross-style bunker: steep grass face, raked sand'], ['v4_bridge', 'White suspension bridge over Indian Creek'], ['v4_bridge2', 'Second suspension bridge and creek'], ['v4_aerial', 'Clubhouse, pool and parking from above'], ['v4_club_rear', 'Clubhouse rear addition'], ['v4_parking', 'Parking lot'], ['v3_pond', 'Pond on the back nine — carved basin, clear water, reflections'], ['v3_creek', 'Creek bank, bunker and reeds'], ['v3_club_golden', 'Clubhouse at golden hour'], ['v3_club_blue', 'Clubhouse at blue hour, lights on'], ['v2_club_photo', 'Clubhouse patio and east wing'], ['v2_club_aerial', 'Clubhouse from the south-east'], ['v2_hero1', 'Clubhouse, parking lot, pool and tennis courts'], ['v2_wide_south', 'Whole course, from the south']]

@@ -12,78 +12,68 @@
   },
   {
    "mat": "CH_Trim",
-   "count": 58554,
+   "count": 58278,
    "offset": 335616
   },
   {
    "mat": "CH_Glass",
    "count": 954,
-   "offset": 2209344
+   "offset": 2200512
   },
   {
    "mat": "CH_Metal",
-   "count": 2232,
-   "offset": 2239872
+   "count": 936,
+   "offset": 2231040
   },
   {
    "mat": "CH_BlackFrame",
    "count": 1620,
-   "offset": 2311296
+   "offset": 2260992
   },
   {
    "mat": "CH_BarnRed",
    "count": 42,
-   "offset": 2363136
+   "offset": 2312832
   },
   {
    "mat": "CH_Concrete",
    "count": 42,
-   "offset": 2364480
+   "offset": 2314176
   },
   {
    "mat": "CH_Stucco",
    "count": 54,
-   "offset": 2365824
+   "offset": 2315520
   },
   {
    "mat": "CH_Shingle",
-   "count": 399,
-   "offset": 2367552
+   "count": 369,
+   "offset": 2317248
   },
   {
    "mat": "CH_Siding",
-   "count": 12,
-   "offset": 2380320
+   "count": 6,
+   "offset": 2329056
   },
   {
    "mat": "CH_Membrane",
    "count": 6,
-   "offset": 2380704
+   "offset": 2329248
   },
   {
    "mat": "CH_MetalRoof",
    "count": 48,
-   "offset": 2380896
+   "offset": 2329440
   },
   {
    "mat": "CH_Mulch",
    "count": 6,
-   "offset": 2382432
+   "offset": 2330976
   },
   {
    "mat": "CH_Canvas",
    "count": 48,
-   "offset": 2382624
-  },
-  {
-   "mat": "CH_CartBody",
-   "count": 648,
-   "offset": 2384160
-  },
-  {
-   "mat": "CH_Seat",
-   "count": 1944,
-   "offset": 2404896
+   "offset": 2331168
   }
  ],
  "Tree_a0": [
@@ -199,6 +189,158 @@
    "mat": "Reflect",
    "count": 12,
    "offset": 362688
+  }
+ ],
+ "extras2": [
+  {
+   "mat": "X2_White",
+   "count": 8706,
+   "offset": 0
+  },
+  {
+   "mat": "X2_Gold",
+   "count": 432,
+   "offset": 278592
+  },
+  {
+   "mat": "CH_Limestone",
+   "count": 6270,
+   "offset": 292416
+  },
+  {
+   "mat": "X2_Flag",
+   "count": 1728,
+   "offset": 493056
+  },
+  {
+   "mat": "X2_Black",
+   "count": 9132,
+   "offset": 548352
+  },
+  {
+   "mat": "X2_Plant",
+   "count": 3348,
+   "offset": 840576
+  },
+  {
+   "mat": "X2_Globe",
+   "count": 7776,
+   "offset": 947712
+  },
+  {
+   "mat": "X2_Awning",
+   "count": 12,
+   "offset": 1196544
+  },
+  {
+   "mat": "X2_AwnGreen",
+   "count": 12,
+   "offset": 1196928
+  },
+  {
+   "mat": "CH_Mulch",
+   "count": 36,
+   "offset": 1197312
+  },
+  {
+   "mat": "X2_Bloom",
+   "count": 4752,
+   "offset": 1198464
+  },
+  {
+   "mat": "CH_Brick",
+   "count": 102,
+   "offset": 1350528
+  },
+  {
+   "mat": "CH_Trim",
+   "count": 15012,
+   "offset": 1353792
+  },
+  {
+   "mat": "CH_Glass",
+   "count": 144,
+   "offset": 1834176
+  },
+  {
+   "mat": "CH_Shingle",
+   "count": 246,
+   "offset": 1838784
+  },
+  {
+   "mat": "CH_Concrete",
+   "count": 180,
+   "offset": 1846656
+  },
+  {
+   "mat": "X2_CourtDark",
+   "count": 6,
+   "offset": 1852416
+  },
+  {
+   "mat": "X2_CourtBlue",
+   "count": 48,
+   "offset": 1852608
+  },
+  {
+   "mat": "X2_Line",
+   "count": 2304,
+   "offset": 1854144
+  },
+  {
+   "mat": "X2_Chain",
+   "count": 72,
+   "offset": 1927872
+  },
+  {
+   "mat": "X2_Iron",
+   "count": 1182,
+   "offset": 1930176
+  },
+  {
+   "mat": "X2_Pole",
+   "count": 600,
+   "offset": 1968000
+  },
+  {
+   "mat": "X2_Wire",
+   "count": 4320,
+   "offset": 1987200
+  },
+  {
+   "mat": "X2_Target",
+   "count": 1512,
+   "offset": 2125440
+  },
+  {
+   "mat": "X2_FlagR",
+   "count": 12,
+   "offset": 2173824
+  },
+  {
+   "mat": "X2_FlagY",
+   "count": 12,
+   "offset": 2174208
+  },
+  {
+   "mat": "X2_FlagB",
+   "count": 12,
+   "offset": 2174592
+  },
+  {
+   "mat": "CH_CartBody",
+   "count": 2565,
+   "offset": 2174976
+  },
+  {
+   "mat": "CH_Seat",
+   "count": 77895,
+   "offset": 2257056
+  },
+  {
+   "mat": "CH_Membrane",
+   "count": 27,
+   "offset": 4749696
   }
  ]
 }
