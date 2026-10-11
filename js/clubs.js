@@ -98,23 +98,81 @@ function putterHead(M) {
   return g;
 }
 
-// Full club in the "club frame" (same axes as the head frame, origin at the hand).
-// sC = shaft direction (unit, hand -> head) in that frame; L = hand-to-hosel length (m).
-export function buildClub(club, sC, L) {
-  const M = mats(), g = new THREE.Group();
+// ---------------------------------------------------------------- scanned club heads (CC BY 4.0, Sketchfab)
+// head_iron: "Golf club Iron" by Real Slim Shady · head_wedge: "Golf Club And Ball" by Yanez Designs.
+// Each GLB is pre-cut to the head and stored in a "shaft frame": +y up the shaft, +x toward the toe, face toward -z,
+// origin at the hosel top. The .json gives the face centre + face normal in that frame.
+export async function loadHeads() {
+  const { GLTFLoader } = await import('/vendor/GLTFLoader.js');
+  const L = new GLTFLoader(), out = {};
+  for (const k of ['iron', 'wedge']) {
+    const [g, meta] = await Promise.all([L.loadAsync(`/models/head_${k}.glb`), fetch(`/models/head_${k}.json`).then(r => r.json())]);
+    const parts = [];
+    g.scene.updateMatrixWorld(true);
+    g.scene.traverse(o => { if (o.isMesh) { const geo = o.geometry.clone().applyMatrix4(o.matrixWorld); const m = o.material.clone();
+      m.metalness = k === 'iron' ? 0.75 : 0.95; m.roughness = k === 'iron' ? 0.32 : 0.22; if (m.map) m.map.colorSpace = THREE.SRGBColorSpace; m.envMapIntensity = 1.2;
+      if (k === 'wedge') m.color.setRGB(0.78, 0.8, 0.83); parts.push({ geo, mat: m }); } });
+    out[k] = { parts, meta, native: Math.asin(THREE.MathUtils.clamp(meta.faceNormal[1], -1, 1)) };
+  }
+  return out;
+}
+const bentCache = new Map();
+// Bend the blade below the neck about the toe axis so the face has this club's loft (like bending a real iron).
+function modelHead(H, kind, loftDeg) {
+  const key = kind + loftDeg; if (bentCache.has(key)) return bentCache.get(key);
+  const h = H[kind], fc = new THREE.Vector3().fromArray(h.meta.faceCenter), n = new THREE.Vector3().fromArray(h.meta.faceNormal);
+  const phi = THREE.MathUtils.degToRad(loftDeg) - h.native, py = fc.y + 0.018, pz = fc.z, c = Math.cos(phi), sn = Math.sin(phi);
+  const g = new THREE.Group();
+  for (const p of h.parts) {
+    const geo = p.geo.clone(), a = geo.attributes.position;
+    for (let i = 0; i < a.count; i++) {
+      const y = a.getY(i), z = a.getZ(i); let w = (py + 0.012 - y) / 0.012; w = w <= 0 ? 0 : w >= 1 ? 1 : w * w * (3 - 2 * w);
+      if (!w) continue; const cc = Math.cos(phi * w), ss = Math.sin(phi * w), dy = y - py, dz = z - pz;
+      a.setY(i, py + dy * cc - dz * ss); a.setZ(i, pz + dy * ss + dz * cc);
+    }
+    geo.computeVertexNormals(); g.add(new THREE.Mesh(geo, p.mat));
+  }
+  const rot = (v) => { const dy = v.y - py, dz = v.z - pz; return new THREE.Vector3(v.x, py + dy * c - dz * sn, pz + dy * sn + dz * c); };
+  const nn = new THREE.Vector3(n.x, n.y * c - n.z * sn, n.y * sn + n.z * c).normalize();
+  const res = { g, fc: rot(fc), n: nn }; bentCache.set(key, res); return res;
+}
+
+// Full club in the "club frame" (head-frame axes, origin at the hand).
+// sC = shaft direction (unit, hand -> head); L = hand-to-face-centre distance along the shaft (m).
+// Returns a group with userData.sweet = ball-contact centre in the club frame.
+export function buildClub(club, sC, L, opts = {}) {
+  const M = mats(), g = new THREE.Group(), lefty = !!opts.lefty, H = opts.heads;
   const s = sC.clone().normalize(), at = k => s.clone().multiplyScalar(k);
   const wood = club.type === 'driver' || club.type === 'wood';
+  const useModel = H && (club.type === 'iron' || club.type === 'wedge');
   g.add(rod(at(-0.17), at(0.1), 0.0128, 0.0105, M.grip));
   g.add(rod(at(-0.172), at(-0.168), 0.0128, 0.0128, M.black));
-  g.add(rod(at(0.1), at(L - 0.05), 0.0068, 0.0046, wood ? M.graphite : M.steel));
-  g.add(rod(at(L - 0.055), at(L - 0.035), 0.0058, 0.0062, M.black));
-  let head;
-  if (club.type === 'driver') head = driverHead(1, M);
-  else if (club.type === 'wood') head = driverHead(0.8, M);
-  else if (club.type === 'putter') head = putterHead(M);
-  else head = ironHead(club.type === 'wedge' ? 0.034 : 0.027 + (club.loft - 27) * 0.0002, M, club.type === 'wedge');
-  const hp = new THREE.Group(); hp.add(head); hp.rotation.x = THREE.MathUtils.degToRad(club.loft) * 0.9;
-  hp.position.copy(at(L)); g.add(hp);
+  const hp = new THREE.Group(), sweet = new THREE.Vector3();
+  if (useModel) {
+    const kind = club.type === 'wedge' ? 'wedge' : 'iron', mh = modelHead(H, kind, club.loft);
+    const xC = new THREE.Vector3(1, 0, 0).addScaledVector(s, -s.x).normalize(), yC = s.clone().negate(), zC = new THREE.Vector3().crossVectors(xC, yC);
+    const origin = at(L + mh.fc.y);
+    hp.matrixAutoUpdate = false; hp.matrix.makeBasis(xC, yC, zC).setPosition(origin);
+    const hc = mh.g.clone(); if (lefty) hc.scale.x = -1; hp.add(hc);
+    const fcm = mh.fc.clone(), nm = mh.n.clone(); if (lefty) { fcm.x *= -1; nm.x *= -1; }
+    sweet.copy(fcm).addScaledVector(nm, 0.0215).applyMatrix4(hp.matrix);
+    const top = L + mh.fc.y;
+    g.add(rod(at(0.1), at(top - 0.004), 0.0068, 0.0048, M.steel));
+    g.add(rod(at(top - 0.012), at(top + 0.002), 0.0056, 0.0058, M.black));
+  } else {
+    g.add(rod(at(0.1), at(L - 0.05), 0.0068, 0.0046, wood ? M.graphite : M.steel));
+    g.add(rod(at(L - 0.055), at(L - 0.035), 0.0058, 0.0062, M.black));
+    let head;
+    if (club.type === 'driver') head = driverHead(1, M);
+    else if (club.type === 'wood') head = driverHead(0.8, M);
+    else if (club.type === 'putter') head = putterHead(M);
+    else head = ironHead(club.type === 'wedge' ? 0.034 : 0.027 + (club.loft - 27) * 0.0002, M, club.type === 'wedge');
+    if (lefty) head.scale.x = -1;
+    hp.add(head); hp.rotation.x = THREE.MathUtils.degToRad(club.loft) * 0.9; hp.position.copy(at(L)); hp.updateMatrix();
+    sweet.set(lefty ? -SWEET.x : SWEET.x, SWEET.y, SWEET.z).applyMatrix4(hp.matrix);
+  }
+  g.add(hp);
+  g.userData.sweet = sweet; g.userData.headOff = sweet.clone().sub(at(L));
   return g;
 }
 
@@ -168,4 +226,20 @@ export function wavePin(pin, t) {
   const f = pin.userData.flag, p = f.geometry.attributes.position, b = pin.userData.base;
   for (let i = 0; i < p.count; i++) { const x = b[i * 3]; p.array[i * 3 + 2] = Math.sin(t * 4 + x * 9) * 0.04 * x * 2; }
   p.needsUpdate = true;
+}
+
+// A real dimpled golf ball (~330 dimples on a Fibonacci lattice), radius 21.35 mm.
+export function buildBall() {
+  const R = 0.02135, g = new THREE.SphereGeometry(R, 160, 112), p = g.attributes.position;
+  const N = 332, C = [], ga = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < N; i++) { const y = 1 - (i + 0.5) / N * 2, r = Math.sqrt(1 - y * y), t = ga * i; C.push(Math.cos(t) * r, y, Math.sin(t) * r); }
+  const cosR = Math.cos(0.088), depth = 0.011, v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i).normalize(); let best = -1;
+    for (let k = 0; k < N * 3; k += 3) { const d = v.x * C[k] + v.y * C[k + 1] + v.z * C[k + 2]; if (d > best) best = d; }
+    let s = 1; if (best > cosR) { const a = Math.acos(Math.min(1, best)) / 0.088; s = 1 - depth * (1 - a * a); }
+    p.setXYZ(i, v.x * R * s, v.y * R * s, v.z * R * s);
+  }
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.32, clearcoat: 0.6, clearcoatRoughness: 0.25, emissive: 0x1a1a1a }));
 }

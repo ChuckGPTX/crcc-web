@@ -32,7 +32,8 @@ sun.shadow.mapSize.set(MOBILE ? 2048 : 4096, MOBILE ? 2048 : 4096);
 { const c = sun.shadow.camera; c.left = -170; c.right = 170; c.top = 170; c.bottom = -170; c.near = 10; c.far = 2000; }
 sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.5;
 scene.add(sun, sun.target);
-scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x55623a, 0.35));
+const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x55623a, 0.35); scene.add(hemi);
+const PHOTO_SKY = location.search.includes('photosky');
 
 // ---------------------------------------------------------------- data
 const fetchJSON = u => fetch(u).then(r => r.json());
@@ -42,7 +43,7 @@ const [meta, hfBuf, treesBuf, blds, manual, cars, holes, cams, pins, gt, tex, sk
   fetchJSON('/data/meta.json'), fetchBuf('/data/hf.bin'), fetchBuf('/data/trees.bin'), fetchJSON('/data/buildings.json'),
   fetchJSON('/data/manual.json'), fetchJSON('/data/cars.json'), fetchJSON('/data/holes.json'), fetchJSON('/data/cams.json'),
   fetchJSON('/data/pins.json'), fetchJSON('/data/gt.json'), loadTex('/tex/terrain.jpg').catch(() => null),
-  loadTex('/tex/sky.jpg').catch(() => null), fetchJSON('/geo/geo.json').catch(() => null)
+  (PHOTO_SKY ? loadTex('/tex/sky.jpg').catch(() => null) : Promise.resolve(null)), fetchJSON('/geo/geo.json').catch(() => null)
 ]);
 const texCache = {};
 function T(name, repeat = 1, color = true) {
@@ -52,6 +53,8 @@ function T(name, repeat = 1, color = true) {
   t.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace; t.anisotropy = 8;
   return texCache[key] = t;
 }
+let sky = null;
+if (!PHOTO_SKY) sky = await import('/js/sky.js').then(m => m.initSky({ scene, renderer, sun, hemi, SUN_DIR })).catch(e => { console.warn('sky', e); return null; });
 if (skyTex) {
   skyTex.mapping = THREE.EquirectangularReflectionMapping; skyTex.colorSpace = THREE.SRGBColorSpace;
   scene.background = skyTex;
@@ -545,12 +548,13 @@ function frame(now) {
     controls.update();
     sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
   }
+  if (sky) sky.update(now, dt, camera);
   if (++frameN % 8 === 0) trees.update(false);
   if (water) water.uni.uTime.value = now / 1000;
   if (labels.visible) for (const sp of labels.children) { const d = sp.position.distanceTo(camera.position); const k = Math.min(Math.max(d * 0.03, 7), 38); sp.scale.set(k, k, 1); sp.material.opacity = d < 60 ? 0 : 1; }
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(frame);
-window.__crcc = { scene, camera, controls, setView, presetView, holeView, hAt, renderer, trees, labels, sun, SUN_DIR };
+window.__crcc = { scene, camera, controls, setView, presetView, holeView, hAt, renderer, trees, labels, sun, SUN_DIR, get sky() { return sky; } };
 // WebXR (Quest) golf: loaded on demand, only shows an Enter VR button when a headset is available
-if (navigator.xr) import('/js/vr.js').then(m => { vrUpdate = m.initVR({ renderer, scene, camera, hAt, holes, pins, sun, SUN_DIR }); }).catch(e => console.warn('vr module', e));
+if (navigator.xr) import('/js/vr.js').then(m => { vrUpdate = m.initVR({ renderer, scene, camera, hAt, holes, pins, sun, SUN_DIR, sky }); }).catch(e => console.warn('vr module', e));

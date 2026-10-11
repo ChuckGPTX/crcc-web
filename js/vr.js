@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { Course, BallSim, State } from '/js/ballsim.js';
 import { CLUBS, computeStrike } from '/js/swing.js';
-import { buildClub, buildFist, buildShoe, buildBag, buildPin, wavePin, SWEET } from '/js/clubs.js';
+import { buildClub, buildFist, buildShoe, buildBag, buildPin, wavePin, buildBall, loadHeads, SWEET } from '/js/clubs.js';
 import { Sfx } from '/js/sfx.js';
 
 const YD = 1.0936133, SURF = ['Rough', 'Fairway', 'Green', 'Tee box', 'Bunker', 'Water', 'Path', 'Semi-rough', 'Native'];
@@ -22,6 +22,7 @@ export function initVR(ctx) {
   const loadPhysics = () => loading ||= Promise.all([fetch('/data/phys_hf.bin').then(r => r.arrayBuffer()), fetch('/data/phys_surf.bin').then(r => r.arrayBuffer())])
     .then(([h, s]) => { course = new Course(h, s); sim = new BallSim(course); });
   const sfx = new Sfx();
+  let heads = null; const headsReady = (params.has('procclubs') ? Promise.resolve(null) : loadHeads()).then(h => { heads = h; if (clubModel) rebuildClub(); }).catch(e => console.warn('club heads', e));
   if (params.has('lefty')) { const lf = params.get('lefty') !== '0'; if (lf !== store.get('lefty', false)) store.set('cal2', null); store.set('lefty', lf); }
   if (params.has('refit')) store.set('cal2', null);
 
@@ -38,7 +39,7 @@ export function initVR(ctx) {
 
   // ------------------------------------------------------------ scene objects
   const world = new THREE.Group(); world.name = 'vr'; world.visible = false; scene.add(world);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.02135, 24, 16), new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, emissive: 0x303030 })); world.add(ball);
+  const ball = buildBall(); world.add(ball);
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.062, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 })); world.add(ring);
   const mkLine = (n, color, op) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); g.setDrawRange(0, 0);
     const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: op < 1, opacity: op })); l.frustumCulled = false; world.add(l); return l; };
@@ -75,8 +76,8 @@ export function initVR(ctx) {
     clubRoot.matrix.makeBasis(X, L.u, Z);
     const sC = V3(L.s.dot(X), L.s.dot(L.u), L.s.dot(Z)).normalize();
     if (clubModel) { clubRoot.remove(clubModel); clubModel.traverse(o => o.geometry?.dispose()); }
-    clubModel = buildClub(CLUBS[S.club], sC, clubLen());
-    if (S.lefty) clubModel.children[clubModel.children.length - 1].scale.x = -1; // mirror the head only
+    clubModel = buildClub(CLUBS[S.club], sC, clubLen(), { lefty: S.lefty, heads });
+    S.sweetCF = clubModel.userData.sweet; S.headOff = clubModel.userData.headOff;
     clubRoot.add(clubModel);
     for (const f of [fistTrail, fistLead]) f.quaternion.setFromUnitVectors(UP, sC);
     fistTrail.position.copy(sC).multiplyScalar(0.0); clubRoot.add(fistTrail);
@@ -116,7 +117,7 @@ export function initVR(ctx) {
     c.fillStyle = '#e3c565'; c.font = '600 42px sans-serif'; c.fillText(`Hole ${hi.n} · Par ${hi.par}`, 22, 54);
     c.fillStyle = '#fff'; c.font = '600 40px sans-serif'; c.fillText(`${dy} yd to pin`, 22, 106);
     c.font = '32px sans-serif'; c.fillStyle = '#cfe0c8'; c.fillText(`${CLUBS[S.club].n}  ·  Stroke ${S.strokes + 1}`, 22, 152);
-    if (sim) { c.fillStyle = '#9fb59a'; c.font = '28px sans-serif'; c.fillText(`Lie: ${SURF[course.surface(sim.pos[0], sim.pos[1])]}`, 22, 194); }
+    if (sim) { c.fillStyle = '#9fb59a'; c.font = '28px sans-serif'; c.fillText(`${SURF[course.surface(sim.pos[0], sim.pos[1])]}${ctx.sky ? ' · ' + ctx.sky.windText() : ''}`, 22, 194); }
     if (!S.cal) { c.fillStyle = '#ffd86b'; c.font = '600 27px sans-serif'; c.fillText('Address the ball, pull trigger', 22, 244); c.fillText('to fit the club to your grip', 22, 278); }
     else if (l) { c.fillStyle = '#fff'; c.font = '28px sans-serif'; c.fillText(l.carry != null ? `Last: ${l.carry} carry · ${l.total} total` : 'Ball in the air…', 22, 244); }
     if (S.trigT > 0) { c.fillStyle = '#ffd86b'; rr(c, 22, 288, 468 * Math.min(1, S.trigT / 1.2), 14, 7); }
@@ -210,8 +211,7 @@ export function initVR(ctx) {
   function clubWorld() {
     const g = gripOf(clubHand()); g.updateMatrixWorld(true); g.matrixWorld.decompose(H, Q, sc);
     W.s.copy(L.s).applyQuaternion(Q); W.t.copy(L.t).applyQuaternion(Q); W.n.copy(L.n).applyQuaternion(Q); W.u.copy(L.u).applyQuaternion(Q);
-    W.hosel.copy(H).addScaledVector(W.s, clubLen());
-    W.ss.copy(W.hosel).addScaledVector(W.t, SWEET.x).addScaledVector(W.n, -SWEET.z);
+    W.ss.copy(S.sweetCF).applyMatrix4(clubRoot.matrixWorld);
     W.sole.copy(W.ss).addScaledVector(W.u, -0.021);
   }
   function calibrate() {
@@ -222,11 +222,15 @@ export function initVR(ctx) {
     t.normalize();
     const T = V3(S.pin[0] - sim.pos[0], 0, -(S.pin[1] - sim.pos[1])).normalize();
     const n = T.clone().addScaledVector(t, -T.dot(t)).normalize();
-    const sv = D.clone().addScaledVector(t, -SWEET.x).addScaledVector(n, SWEET.z), len = sv.length();
-    if (len < 0.45 || len > 1.5) { say(len < 0.45 ? 'Too close — step back from the ball' : 'Too far — step closer to the ball', 3); return; }
-    const qi = Q.clone().invert();
-    S.cal = { s: sv.normalize().applyQuaternion(qi).toArray(), t: t.applyQuaternion(qi).toArray(), n: n.applyQuaternion(qi).toArray(), L: len, club: S.club };
-    store.set('cal2', S.cal); rebuildClub(); haptic(clubHand(), 0.8, 120); sfx.tick();
+    const Xw = S.lefty ? t.clone().negate() : t.clone(), Uw = V3().crossVectors(t, n).multiplyScalar(S.lefty ? -1 : 1).normalize(), Zw = n.clone().negate();
+    const qi = Q.clone().invert(), old = S.cal;
+    for (let it = 0; it < 3; it++) { // head offset depends on the shaft angle, so solve a couple of times
+      const h = S.headOff, sv = D.clone().addScaledVector(Xw, -h.x).addScaledVector(Uw, -h.y).addScaledVector(Zw, -h.z), len = sv.length();
+      if (len < 0.45 || len > 1.5) { S.cal = old; rebuildClub(); say(len < 0.45 ? 'Too close — step back from the ball' : 'Too far — step closer to the ball', 3); return; }
+      S.cal = { s: sv.normalize().applyQuaternion(qi).toArray(), t: t.clone().applyQuaternion(qi).toArray(), n: n.clone().applyQuaternion(qi).toArray(), L: len, club: S.club };
+      rebuildClub();
+    }
+    store.set('cal2', S.cal); haptic(clubHand(), 0.8, 120); sfx.tick();
     say('Club fitted to your grip. Swing away!', 3);
   }
 
@@ -266,6 +270,7 @@ export function initVR(ctx) {
     const r = computeStrike(CLUBS[S.club], toSim(vel), toSim(W.n), lie, 0, { toe, vert, fat: S.fat, lefty: S.lefty });
     if (!r.ok) return;
     S.armed = false; S.hist.length = 0; S.strokes++; S.landedShown = false;
+    sim.wind = ctx.sky && !params.has('nowind') ? ctx.sky.windSim() : [0, 0, 0];
     if (r.putt) sim.putt(sim.pos[0], sim.pos[1], r.speed, r.aim);
     else sim.launch(sim.pos[0], sim.pos[1], r.mph, r.vla, 0, r.back, r.side, r.aim);
     S.last = { ...r, carry: null, total: null }; S.startPos = sim.start.slice(); S.trail.length = 0; S.trailT = 1;
@@ -408,7 +413,7 @@ export function initVR(ctx) {
     if (S.on) return;
     vrBtn.textContent = 'Loading…'; sfx.init();
     try {
-      await loadPhysics();
+      await loadPhysics(); await Promise.race([headsReady, new Promise(r => setTimeout(r, 4000))]);
       renderer.xr.enabled = true; renderer.xr.setReferenceSpaceType('local-floor'); renderer.xr.setFramebufferScaleFactor(+params.get('scale') || 0.85);
       const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
       session.addEventListener('end', () => { S.on = false; world.visible = false; camera.near = savedNear; camera.far = savedFar; camera.updateProjectionMatrix(); sun.castShadow = true; vrBtn.textContent = '⛳ Enter VR'; sfx.whoosh(0); });
@@ -426,13 +431,13 @@ export function initVR(ctx) {
   function preview() { // lay the gear out in front of the desktop camera (no headset needed)
     world.visible = true; const g = new THREE.Group(); world.add(g);
     const base = V3(-236.19, 0, -44.2); base.y = ground(base.x, base.z);
-    CLUBS.forEach((c, i) => { const m = buildClub(c, V3(0, -1, 0), 0.86 * c.inch / 37); m.position.set(base.x - 0.9 + i * 0.26, base.y + 0.86 * c.inch / 37 + 0.0, base.z); m.rotation.y = -0.5; g.add(m); });
+    CLUBS.forEach((c, i) => { const m = buildClub(c, V3(0, -1, 0), 0.86 * c.inch / 37, { heads }); m.position.set(base.x - 0.9 + i * 0.26, base.y + 0.86 * c.inch / 37 + 0.0, base.z); m.rotation.y = -0.5; g.add(m); });
     const f1 = buildFist(false), f2 = buildFist(true); f1.position.set(base.x - 0.4, base.y + 0.3, base.z + 0.6); f2.position.set(base.x - 0.2, base.y + 0.3, base.z + 0.6); g.add(f1, f2);
     shoes[0].position.set(base.x + 0.2, base.y, base.z + 0.7); shoes[1].position.set(base.x + 0.45, base.y, base.z + 0.7);
     bag.position.set(base.x + 1.1, base.y, base.z - 0.2);
     const p = buildPin(1); p.position.set(base.x + 0.9, base.y, base.z + 0.9); g.add(p);
     return base;
   }
-  window.__crccVR = { S, get sim() { return sim; }, CLUBS, update, loadPhysics, newHole, controllers, grips, rebuildClub, calibrate, attach, clubWorld, W, preview, setupAtBall };
+  window.__crccVR = { headsReady, S, get sim() { return sim; }, CLUBS, update, loadPhysics, newHole, controllers, grips, rebuildClub, calibrate, attach, clubWorld, W, preview, setupAtBall };
   return update;
 }
