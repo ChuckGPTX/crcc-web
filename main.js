@@ -113,7 +113,7 @@ const P = (x, y, z) => new THREE.Vector3(x, z, -y);   // local meters (x east, y
   const t = new THREE.Mesh(g, m); t.receiveShadow = true; scene.add(t);
   // skirt ground beyond the model, matching fog
   const far = new THREE.Mesh(new THREE.PlaneGeometry(12000, 12000).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x7c8f62 }));
-  far.position.y = -14; scene.add(far);
+  far.position.y = meta.zmin - ZO - 4; scene.add(far); // always below the lowest point of the course (was -14, which poked through the creek valley)
 }
 // ---------------------------------------------------------------- water: carved ponds + creek, depth-tinted, reflective, animated ripples
 const water = await (async () => {
@@ -548,7 +548,7 @@ function frame(now) {
     controls.update();
     sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
   }
-  if (sky) sky.update(now, dt, camera);
+  if (sky) { sky.update(now, dt, camera); trees.impMat.uniforms.gain.value = 2.15 * sky.state.light; }
   if (++frameN % 8 === 0) trees.update(false);
   if (water) water.uni.uTime.value = now / 1000;
   if (labels.visible) for (const sp of labels.children) { const d = sp.position.distanceTo(camera.position); const k = Math.min(Math.max(d * 0.03, 7), 38); sp.scale.set(k, k, 1); sp.material.opacity = d < 60 ? 0 : 1; }

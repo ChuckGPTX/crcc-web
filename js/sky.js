@@ -79,7 +79,7 @@ export function initSky(ctx) {
   const pmrem = new THREE.PMREMGenerator(renderer); let envRT = null, lastEnvSun = new THREE.Vector3(9, 9, 9), lastEnvCover = -1;
   scene.background = null;
 
-  const state = { mode: params.get('time') ? 'manual' : 'live', hour: +params.get('time') || 12, weather: null, el: 45, az: 200, cover: 0.3, windMs: 0, windFrom: 0, code: 0 };
+  const state = { mode: params.get('time') ? 'manual' : 'live', hour: +params.get('time') || 12, weather: null, light: 1, el: 45, az: 200, cover: 0.3, windMs: 0, windFrom: 0, code: 0 };
   const sunCol = new THREE.Color(), tmp = new THREE.Color();
   const dayFog = new THREE.Color(0.72, 0.78, 0.85), goldFog = new THREE.Color(0.86, 0.68, 0.52), nightFog = new THREE.Color(0.035, 0.045, 0.075), greyFog = new THREE.Color(0.62, 0.65, 0.68);
 
@@ -98,6 +98,7 @@ export function initSky(ctx) {
     hemi.groundColor.setRGB(0.03, 0.035, 0.03).lerp(tmp.setRGB(0.33, 0.38, 0.23), day);
     hemi.intensity = (0.35 + 0.45 * c) * day + 0.25 * (1 - day);
     scene.environmentIntensity = 0.12 + 0.68 * day;
+    state.light = 0.14 + 0.86 * day * (0.7 + 0.3 * sunK); // overall brightness for unlit things (far tree impostors)
     renderer.toneMappingExposure = 0.95 + 0.45 * (1 - day);
     if (scene.fog) {
       const f = scene.fog.color.copy(dayFog).lerp(goldFog, (1 - sstep(2, 14, e)) * sstep(-4, 1, e)).lerp(greyFog, c * 0.6);
