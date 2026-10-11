@@ -530,21 +530,27 @@ let last = performance.now(), frameN = 0;
 function resize() { const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); }
 addEventListener('resize', resize); resize();
 controls.addEventListener('start', () => { flyState.t = 1; });
+let vrUpdate = null;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
-  if (flyState.t < 1) {
-    flyState.t = Math.min(1, flyState.t + dt / flyState.dur); const k = ease(flyState.t);
-    camera.position.lerpVectors(flyState.a.e, flyState.b.e, k); controls.target.lerpVectors(flyState.a.t, flyState.b.t, k);
+  const xr = renderer.xr.isPresenting;
+  if (xr) { if (vrUpdate) vrUpdate(now, dt); }
+  else {
+    if (flyState.t < 1) {
+      flyState.t = Math.min(1, flyState.t + dt / flyState.dur); const k = ease(flyState.t);
+      camera.position.lerpVectors(flyState.a.e, flyState.b.e, k); controls.target.lerpVectors(flyState.a.t, flyState.b.t, k);
+    }
+    // keep camera above ground
+    const gy = hAt(camera.position.x, -camera.position.z) + 1.8; if (camera.position.y < gy) camera.position.y = gy;
+    controls.update();
+    sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
   }
-  // keep camera above ground
-  const gy = hAt(camera.position.x, -camera.position.z) + 1.8; if (camera.position.y < gy) camera.position.y = gy;
-  controls.update();
-  sun.target.position.copy(controls.target); sun.position.copy(controls.target).addScaledVector(SUN_DIR, 900);
   if (++frameN % 8 === 0) trees.update(false);
   if (water) water.uni.uTime.value = now / 1000;
   if (labels.visible) for (const sp of labels.children) { const d = sp.position.distanceTo(camera.position); const k = Math.min(Math.max(d * 0.03, 7), 38); sp.scale.set(k, k, 1); sp.material.opacity = d < 60 ? 0 : 1; }
   renderer.render(scene, camera);
-  requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+renderer.setAnimationLoop(frame);
 window.__crcc = { scene, camera, controls, setView, presetView, holeView, hAt, renderer, trees, labels, sun, SUN_DIR };
+// WebXR (Quest) golf: loaded on demand, only shows an Enter VR button when a headset is available
+if (navigator.xr) import('/js/vr.js').then(m => { vrUpdate = m.initVR({ renderer, scene, camera, hAt, holes, pins, sun, SUN_DIR }); }).catch(e => console.warn('vr module', e));
