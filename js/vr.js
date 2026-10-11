@@ -22,6 +22,8 @@ export function initVR(ctx) {
   const loadPhysics = () => loading ||= Promise.all([fetch('/data/phys_hf.bin').then(r => r.arrayBuffer()), fetch('/data/phys_surf.bin').then(r => r.arrayBuffer())])
     .then(([h, s]) => { course = new Course(h, s); sim = new BallSim(course); });
   const sfx = new Sfx();
+  if (params.has('lefty')) { const lf = params.get('lefty') !== '0'; if (lf !== store.get('lefty', false)) store.set('cal2', null); store.set('lefty', lf); }
+  if (params.has('refit')) store.set('cal2', null);
 
   // ------------------------------------------------------------ state
   const S = {
