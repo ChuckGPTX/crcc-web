@@ -40,6 +40,7 @@ export function initVR(ctx) {
   // ------------------------------------------------------------ scene objects
   const world = new THREE.Group(); world.name = 'vr'; world.visible = false; scene.add(world);
   const ball = buildBall(); world.add(ball);
+  const tee = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.0025, 0.03, 10).translate(0, 0.0, 0), new THREE.MeshStandardMaterial({ color: 0xf5f5f0, roughness: 0.5 })); world.add(tee);
   const ring = new THREE.Mesh(new THREE.RingGeometry(0.05, 0.062, 40).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45 })); world.add(ring);
   const mkLine = (n, color, op) => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(n * 3), 3)); g.setDrawRange(0, 0);
     const l = new THREE.Line(g, new THREE.LineBasicMaterial({ color, transparent: op < 1, opacity: op })); l.frustumCulled = false; world.add(l); return l; };
@@ -118,7 +119,7 @@ export function initVR(ctx) {
         c.fillStyle = '#9fb59a'; c.fillText(String(i), x, y); c.fillText('p' + hi.par, x, y + 30);
         c.fillStyle = s == null ? '#556' : s < hi.par ? '#7fe07f' : s > hi.par ? '#ff9d7a' : '#fff'; c.font = '600 28px sans-serif'; c.fillText(s == null ? '–' : String(s), x, y + 66); c.font = '24px sans-serif';
         if (s != null) { tot += s; par += hi.par; } }
-      c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText(par ? `Total ${tot} (${tot - par >= 0 ? '+' : ''}${tot - par})` : 'No holes finished yet', 22, 296); c.fillStyle = '#9fb59a'; c.font = '22px sans-serif'; c.fillText(`Now: hole ${S.hole} · A/B change hole`, 260, 296);
+      c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText(par ? `Total ${tot} (${tot - par >= 0 ? '+' : ''}${tot - par})` : 'No holes finished yet', 22, 296); c.fillStyle = '#9fb59a'; c.font = '22px sans-serif'; c.fillText(`Hole ${S.hole} · A/B hole · Y assist: ${ASSIST[S.assist].label}`, 230, 296);
       hudTex.needsUpdate = true; return;
     }
     const hi = holeInfo(S.hole), dy = sim ? Math.round(d2(sim.pos, S.pin) * YD) : hi.yards, l = S.last;
@@ -224,7 +225,7 @@ export function initVR(ctx) {
   }
   function calibrate() {
     clubWorld();
-    const B = V3(sim.pos[0], sim.pos[2], -sim.pos[1]), D = B.clone().sub(H);
+    S.lowOff = 0; const B = V3(sim.pos[0], sim.pos[2] + (onTee() ? 0.012 : 0), -sim.pos[1]), D = B.clone().sub(H);
     const s0 = D.clone().normalize(), t = V3(s0.x, 0, s0.z);
     if (t.length() < 0.15) { say('Club too upright — reach out to the ball', 3); return; }
     t.normalize();
@@ -242,51 +243,147 @@ export function initVR(ctx) {
     say('Club fitted to your grip. Swing away!', 3);
   }
 
-  const ballW = V3(), seg = V3(), cp = V3(), dv = V3();
+  // ------------------------------------------------------------ swing 2.0
+  // Assist levels (Golf+ style Amateur/Pro): hit-zone size, how much off-centre/thin penalties count,
+  // how much the face/path are nudged toward the target line, and auto low-point correction.
+  const ASSIST = {
+    easy:   { vert: 0.075, toe: 0.08, pen: 0.3, face: 0.65, path: 0.5, auto: 0.6, label: 'Easy' },
+    normal: { vert: 0.052, toe: 0.068, pen: 0.6, face: 0.3, path: 0.2, auto: 0.4, label: 'Normal' },
+    pro:    { vert: 0.038, toe: 0.055, pen: 1.0, face: 0, path: 0, auto: 0, label: 'Pro' },
+  };
+  S.assist = params.get('assist') || store.get('assist', 'normal'); if (!ASSIST[S.assist]) S.assist = 'normal';
+  S.lowOff = 0;           // learned vertical offset of your swing's low point vs the ball (m), applied by assist
+  const prevPose = { H: V3(), Q: new THREE.Quaternion(), ok: false };
+  const sweetGL = V3(), ballW = V3(), cp = V3(), dv = V3(), Hk = V3(), Qk = new THREE.Quaternion(), ssA = V3(), ssB = V3(), seg = V3();
+  const tK = V3(), uK = V3(), nK = V3();
+  let near = null, passInfo = null;
+  function headAt(Hx, Qx, out) { return out.copy(sweetGL).applyQuaternion(Qx).add(Hx); }
+  function onTee() { return sim && course.surface(sim.pos[0], sim.pos[1]) === 3 && !CLUBS[S.club].putter; }
+  function ballCentre(out) { // where the club must meet the ball (tee lifts it; assist shifts the zone to your low point)
+    out.set(sim.pos[0], sim.pos[2] + (onTee() ? 0.012 : 0), -sim.pos[1]); out.y += S.lowOff * ASSIST[S.assist].auto; return out;
+  }
+  function rotateToward(vx, vy, tx, ty, k) { // rotate 2D vector (vx,vy) toward direction (tx,ty) by fraction k
+    const a = Math.atan2(vy, vx), b = Math.atan2(ty, tx); let d = b - a; d = Math.atan2(Math.sin(d), Math.cos(d));
+    const L2 = Math.hypot(vx, vy), r = a + d * k; return [Math.cos(r) * L2, Math.sin(r) * L2];
+  }
   function swing(now, dt) {
     clubWorld();
-    S.hist.push({ t: now, p: W.ss.clone() }); while (S.hist.length > 14) S.hist.shift();
-    let ref = S.hist[0]; for (const h of S.hist) if (now - h.t <= 40) { ref = h; break; }
-    const vel = W.ss.clone().sub(ref.p).divideScalar(Math.max(0.008, (now - ref.t) / 1000)), sp = vel.length();
-    S.speed = sp; sfx.whoosh(sp);
+    sweetGL.copy(S.sweetCF).applyMatrix4(clubRoot.matrix);           // sweet spot in grip space
+    const g = gripOf(clubHand());
+    // clubhead velocity: from the headset's own controller velocity + spin when available (most accurate), else frame delta
+    let vel;
+    if (g.hasLinearVelocity && g.hasAngularVelocity) {
+      const r = W.ss.clone().sub(H); vel = V3().copy(g.linearVelocity).add(V3().crossVectors(g.angularVelocity, r));
+    } else {
+      S.hist.push({ t: now, p: W.ss.clone() }); while (S.hist.length > 14) S.hist.shift();
+      let ref = S.hist[0]; for (const h of S.hist) if (now - h.t <= 30) { ref = h; break; }
+      vel = W.ss.clone().sub(ref.p).divideScalar(Math.max(0.008, (now - ref.t) / 1000));
+    }
+    const sp = vel.length(); S.speed = sp; sfx.whoosh(sp);
     if (sp > 9 && Math.floor(now / 30) % 2 === 0) haptic(clubHand(), Math.min(0.35, sp / 120), 20);
-    // clubhead trail
+    // clubhead trail (green = this swing came through the hit zone, red = it missed)
     const ht = headTrail.geometry, ha = ht.attributes.position.array;
     if (sp > 6) { ha.copyWithin(3, 0, ha.length - 3); ha[0] = W.ss.x; ha[1] = W.ss.y; ha[2] = W.ss.z; ht.attributes.position.needsUpdate = true; ht.setDrawRange(0, Math.min(28, (ht.drawRange.count || 0) + 1)); }
     else if (ht.drawRange.count) ht.setDrawRange(0, Math.max(0, ht.drawRange.count - 2));
-    if (sp < 1.2) { S.armed = true; S.fat = 0; S.turfDone = false; }
-    if (!sim || sim.moving || now < S.resetAt || !S.cal) return;
-    ballW.set(sim.pos[0], sim.pos[2], -sim.pos[1]);
-    // turf: sole below ground just before the ball = fat
-    const g = ground(W.sole.x, W.sole.z), depth = g - W.sole.y;
-    if (depth > 0.006 && sp > 4) {
-      const toBall = ballW.clone().sub(W.ss); toBall.y = 0; const hv = vel.clone(); hv.y = 0;
-      if (toBall.length() < 0.45 && hv.dot(toBall) > 0 && S.armed) S.fat = Math.max(S.fat, depth);
-      if (!S.turfDone) { S.turfDone = true; sfx.turf(Math.min(1, sp / 20)); haptic(clubHand(), 0.7, 60); }
+    const practice = btn(offHand(), 1);   // hold the off-hand grip at the ball = practice swing (never hits)
+    // swing finished: report a whiff or practice result
+    if (sp < 1.2) {
+      if (near && near.speed > 6 && S.armed && sim && !sim.moving) missFeedback(near, practice);
+      near = null; S.armed = true; S.fat = 0; S.turfDone = false;
     }
-    if (!S.armed) return;
-    const prev = S.hist.length > 1 ? S.hist[S.hist.length - 2].p : W.ss;
-    seg.copy(W.ss).sub(prev); const l2 = seg.lengthSq();
-    const tt = l2 > 1e-10 ? THREE.MathUtils.clamp(dv.copy(ballW).sub(prev).dot(seg) / l2, 0, 1) : 0;
-    cp.copy(prev).addScaledVector(seg, tt); dv.copy(ballW).sub(cp);
-    const toe = dv.dot(W.t), vert = -dv.dot(W.u), depthN = dv.dot(W.n);
-    if (Math.abs(toe) > 0.055 || Math.abs(vert) > 0.038 || Math.abs(depthN) > 0.03) return;
-    // club bottoming out under the ball (sole well below the turf at contact) also plays heavy
-    const soleC = cp.clone().addScaledVector(W.u, -0.021), dC = ground(soleC.x, soleC.z) - soleC.y;
-    if (dC > 0.01) S.fat = Math.max(S.fat, dC - 0.004);
-    const lie = course.surface(sim.pos[0], sim.pos[1]);
-    const r = computeStrike(CLUBS[S.club], toSim(vel), toSim(W.n), lie, 0, { toe, vert, fat: S.fat, lefty: S.lefty });
+    const finishPose = () => { prevPose.H.copy(H); prevPose.Q.copy(Q); prevPose.ok = true; };
+    if (!sim || sim.moving || now < S.resetAt || !S.cal || !prevPose.ok) { finishPose(); return; }
+    ballCentre(ballW);
+    const A = ASSIST[S.assist];
+    // sweep the club along its real arc between frames (slerp the hand pose) so fast swings cannot skip the ball
+    headAt(prevPose.H, prevPose.Q, ssA);
+    const steps = Math.min(32, Math.max(1, Math.ceil(ssA.distanceTo(W.ss) / 0.015)));
+    // rigid "screw" motion between the two frames: rotation phi about an axis through point c plus slide d along it
+    const dQ = Q.clone().multiply(prevPose.Q.clone().invert()); if (dQ.w < 0) { dQ.x *= -1; dQ.y *= -1; dQ.z *= -1; dQ.w *= -1; }
+    const phi = 2 * Math.acos(Math.min(1, dQ.w)), sAx = Math.sqrt(Math.max(0, 1 - dQ.w * dQ.w));
+    const ax = sAx > 1e-6 ? V3(dQ.x / sAx, dQ.y / sAx, dQ.z / sAx) : V3(0, 1, 0);
+    const tr = H.clone().sub(prevPose.H.clone().applyQuaternion(dQ)), dAx = tr.dot(ax), tP = tr.clone().addScaledVector(ax, -dAx);
+    const screw = phi > 2e-3, cAx = screw ? tP.clone().add(V3().crossVectors(ax, tP).multiplyScalar(1 / Math.tan(phi / 2))).multiplyScalar(0.5) : null;
+    const rf = new THREE.Quaternion();
+    // with headset velocities: curve the clubhead path through both frames (cubic Hermite) – exact for arcs
+    const vHeadNow = (g.hasLinearVelocity && g.hasAngularVelocity) ? vel.clone() : null;
+    const herm = vHeadNow && prevPose.v ? { p0: ssA.clone(), p1: W.ss.clone(), m0: prevPose.v.clone().multiplyScalar(dt), m1: vHeadNow.clone().multiplyScalar(dt) } : null;
+    let dA = dv.copy(ballW).sub(ssA).dot(nK.copy(L.n).applyQuaternion(prevPose.Q));
+    for (let k = 1; k <= steps; k++) {
+      const f = k / steps;
+      if (screw) { rf.setFromAxisAngle(ax, phi * f); Hk.copy(prevPose.H).sub(cAx).applyQuaternion(rf).add(cAx).addScaledVector(ax, dAx * f); Qk.copy(rf).multiply(prevPose.Q); }
+      else { Hk.lerpVectors(prevPose.H, H, f); Qk.slerpQuaternions(prevPose.Q, Q, f); }
+      if (herm) { const f2 = f * f, f3 = f2 * f; ssB.copy(herm.p0).multiplyScalar(2 * f3 - 3 * f2 + 1).addScaledVector(herm.m0, f3 - 2 * f2 + f).addScaledVector(herm.p1, -2 * f3 + 3 * f2).addScaledVector(herm.m1, f3 - f2); }
+      else headAt(Hk, Qk, ssB);
+      tK.copy(L.t).applyQuaternion(Qk); nK.copy(L.n).applyQuaternion(Qk); uK.copy(L.u).applyQuaternion(Qk);
+      // turf strike before the ball = fat
+      const soleY = ssB.y - 0.021, gy = ground(ssB.x, ssB.z), depth = gy - soleY;
+      if (depth > 0.006 && sp > 4) {
+        const toB = V3(ballW.x - ssB.x, 0, ballW.z - ssB.z), hv = V3(vel.x, 0, vel.z);
+        if (toB.length() < 0.45 && hv.dot(toB) > 0 && S.armed && !practice) S.fat = Math.max(S.fat, depth * A.pen);
+        if (!S.turfDone) { S.turfDone = true; sfx.turf(Math.min(1, sp / 20)); haptic(clubHand(), 0.7, 60); }
+      }
+      // contact = the moment the face centre passes through the ball's plane
+      const dB = dv.copy(ballW).sub(ssB).dot(nK);
+      if (dA > 0 && dB <= 0 && S.armed) {
+        const lam = dA / (dA - dB); cp.lerpVectors(ssA, ssB, lam); dv.copy(ballW).sub(cp);
+        const toe = dv.dot(tK), vert = -dv.dot(uK), dist = Math.hypot(toe, vert);
+        if (!near || dist < near.dist) near = { dist, toe, vert, speed: sp };
+        if (Math.abs(toe) <= A.toe && Math.abs(vert) <= A.vert) {
+          if (practice) { S.armed = false; showPractice({ toe, vert, faceN: nK.clone(), vel: vel.clone(), sp }); break; }
+          strike(now, vel, nK.clone(), uK.clone(), cp.clone(), toe, vert); break;
+        }
+      }
+      dA = dB; ssA.copy(ssB);
+    }
+    prevPose.v = vHeadNow;
+    finishPose();
+  }
+  function assisted(faceN, vel) {
+    const A = ASSIST[S.assist], aim = aimPoint(), tx = aim[0] - sim.pos[0], ty = aim[1] - sim.pos[1];
+    const f = toSim(faceN), v = toSim(vel);
+    const [fx, fy] = rotateToward(f[0], f[1], tx, ty, A.face); const [vx, vy] = rotateToward(v[0], v[1], tx, ty, A.path);
+    return { f: [fx, fy, f[2]], v: [vx, vy, v[2]] };
+  }
+  function strike(now, vel, faceN, uK2, cpt, toe, vert) {
+    const A = ASSIST[S.assist];
+    const soleC = cpt.clone().addScaledVector(uK2, -0.021), dC = ground(soleC.x, soleC.z) - soleC.y;
+    if (dC > 0.01) S.fat = Math.max(S.fat, (dC - 0.004) * A.pen);
+    const lie = course.surface(sim.pos[0], sim.pos[1]), as = assisted(faceN, vel);
+    const r = computeStrike(CLUBS[S.club], as.v, as.f, lie, 0, { toe: toe * A.pen, vert: vert * A.pen, fat: S.fat, lefty: S.lefty });
     if (!r.ok) return;
-    S.armed = false; S.hist.length = 0; S.strokes++; S.landedShown = false;
+    S.lowOff = S.lowOff * 0.6 + THREE.MathUtils.clamp(-vert, -0.05, 0.05) * 0.4;   // learn where you bottom out
+    S.armed = false; S.hist.length = 0; S.strokes++; S.landedShown = false; near = null;
     sim.wind = ctx.sky && !params.has('nowind') ? ctx.sky.windSim() : [0, 0, 0];
     if (r.putt) sim.putt(sim.pos[0], sim.pos[1], r.speed, r.aim);
     else sim.launch(sim.pos[0], sim.pos[1], r.mph, r.vla, 0, r.back, r.side, r.aim);
     S.last = { ...r, carry: null, total: null }; S.startPos = sim.start.slice(); S.trail.length = 0; S.trailT = 1;
     if (!r.putt) S.slowUntil = now + 380;
+    headTrail.material.color.set(0x7fe07f);
     const power = r.putt ? Math.min(1, r.speed / 4) : Math.min(1, r.clubMph / 100);
     sfx.impact(CLUBS[S.club].type, r.quality, power); haptic(clubHand(), r.quality === 'Pure' || r.quality === 'Solid' ? 1 : 0.55, r.putt ? 40 : 120);
     if (S.fat > 0.004) sfx.turf(0.9);
     drawHud(); drawBig();
+  }
+  // tell the player exactly why a swing missed (Everybody's Golf VR style practice feedback)
+  function missFeedback(n, practice) {
+    if (n.dist > 0.4) return;
+    headTrail.material.color.set(0xff6b6b);
+    const cm = v => Math.round(Math.abs(v) * 100);
+    let why;
+    if (Math.abs(n.vert) >= Math.abs(n.toe) * 0.8) why = n.vert > 0 ? `Club ${cm(n.vert)} cm above the ball — bend more / stand closer to it` : `Club ${cm(n.vert)} cm too low — stand a bit taller`;
+    else why = n.toe > 0 ? `Ball was ${cm(n.toe)} cm out past the toe — step closer` : `Ball was ${cm(n.toe)} cm in at the heel — step back`;
+    S.lowOff = S.lowOff * 0.6 + THREE.MathUtils.clamp(-n.vert, -0.05, 0.05) * 0.4;
+    say((practice ? 'Practice: ' : 'Whiff! ') + why, 4); haptic(clubHand(), 0.2, 40);
+  }
+  function showPractice(pi) {
+    headTrail.material.color.set(0x7fd3ff);
+    const lie = course.surface(sim.pos[0], sim.pos[1]), as = assisted(pi.faceN, pi.vel), A = ASSIST[S.assist];
+    const r = computeStrike(CLUBS[S.club], as.v, as.f, lie, 0, { toe: pi.toe * A.pen, vert: pi.vert * A.pen, lefty: S.lefty });
+    if (!r.ok) return;
+    const fp = r.faceToPath, shape = Math.abs(fp) < 1.5 ? 'straight' : (fp > 0) !== S.lefty ? 'fade/slice' : 'draw/hook';
+    say(r.putt ? `Practice putt: ${r.speed.toFixed(1)} m/s` : `Practice: ${r.clubMph.toFixed(0)} mph club · ${r.quality} · ${shape} (${Math.abs(fp).toFixed(1)}°)`, 5);
+    haptic(clubHand(), 0.25, 30);
   }
   function onRest() {
     const l = S.last; if (!l) return;
@@ -354,7 +451,10 @@ export function initVR(ctx) {
     else if (edge('A', btn('right', 4))) { S.club = (S.club + 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
     else if (edge('B', btn('right', 5))) { S.club = (S.club + CLUBS.length - 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
     if (edge('X', btn('left', 4)) && sim && !sim.moving) setupAtBall(true);
-    if (edge('Y', btn('left', 5))) aimLine.visible = !aimLine.visible;
+    if (edge('Y', btn('left', 5))) {
+      if (showCard) { const ks = Object.keys(ASSIST); S.assist = ks[(ks.indexOf(S.assist) + 1) % ks.length]; store.set('assist', S.assist); say(`Assist: ${ASSIST[S.assist].label}`, 3); sfx.tick(); drawHud(); }
+      else aimLine.visible = !aimLine.visible;
+    }
     if (edge('RS', btn('right', 3)) && sim && !sim.moving) { placeBall(S.startPos[0], S.startPos[1]); setupAtBall(); say('Mulligan — ball replaced', 2); }
     const card = btn(offHand(), 0); if (card !== showCard) { showCard = card; drawHud(); }
     // trigger on the club hand: first press fits the club; hold 1.2 s at the ball to re-fit
@@ -404,12 +504,13 @@ export function initVR(ctx) {
         const a = tracer.geometry.attributes.position.array; a.set(S.trail.slice(-3), S.trail.length - 3); tracer.geometry.attributes.position.needsUpdate = true; tracer.geometry.setDrawRange(0, S.trail.length / 3); }
       if (S.last && S.last.carry == null && Math.floor(now / 200) % 2 === 0) drawBig();
     }
-    ball.position.set(sim.pos[0], sim.pos[2], -sim.pos[1]);
+    const teed = !sim.moving && onTee(); ball.position.set(sim.pos[0], sim.pos[2] + (teed ? 0.012 : 0), -sim.pos[1]);
+    tee.visible = teed; tee.position.set(sim.pos[0], sim.pos[2] - 0.021, -sim.pos[1]);
     ball.scale.setScalar(sim.state === State.Flight ? 1 + Math.min(5, headWorld().distanceTo(ball.position) / 25) : 1);
     ring.position.set(sim.pos[0], ground(ball.position.x, ball.position.z) + 0.006, -sim.pos[1]); ring.visible = !sim.moving;
     aimLine.position.copy(ball.position); { const A = aimPoint(); aimLine.rotation.y = Math.atan2(-(A[0] - sim.pos[0]), (A[1] - sim.pos[1])); }
-    big.position.set(sim.start[0], sim.start[2] + 2.1, -sim.start[1]); big.lookAt(headWorld()); big.visible = !!(S.last || !S.cal || (S.msg && now < S.msgT));
-    if (S.msg && now > S.msgT) { S.msg = ''; drawHud(); drawBig(); }
+    big.position.set(sim.start[0], sim.start[2] + 2.1, -sim.start[1]); big.lookAt(headWorld()); big.visible = !!(S.last || !S.cal || (S.msg && performance.now() < S.msgT));
+    if (S.msg && performance.now() > S.msgT) { S.msg = ''; drawHud(); drawBig(); }
     vig.visible = S.vign > 0.02; vig.material.uniforms.a.value = S.vign;
     if (pinObj) wavePin(pinObj, (waveT += dt));
     const hw = headWorld(); sun.target.position.copy(hw); sun.position.copy(hw).addScaledVector(ctx.SUN_DIR, 900);
@@ -438,7 +539,7 @@ export function initVR(ctx) {
       S.base = renderer.xr.getReferenceSpace(); S.on = true; world.visible = true;
       attach(); newHole(hashHole() || S.hole);
       setTimeout(() => setupAtBall(), 700);
-      if (S.cal) say('Left stick walk · pump both grips to run · X: walk to ball · A/B: club', 7);
+      if (S.cal) say(`Assist: ${ASSIST[S.assist].label} · hold left grip = practice swing · left trigger + Y = change assist`, 8);
     } catch (e) { console.warn('VR start failed', e); S.on = false; label(); alert('Could not start VR: ' + (e.message || e)); }
   };
 
