@@ -97,6 +97,14 @@ export function initVR(ctx) {
     return { n: h.hole, par: h.par, yards: h.yards, tee: h.line[0], pin: f ? [f.x, f.y] : h.line[h.line.length - 1] };
   };
   const d2 = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+  // where to aim from the ball: the flag, or on long doglegs the corner of the hole line that is a sensible drive away
+  function aimPoint() {
+    if (!sim) return S.pin; const b = sim.pos, dp = d2(b, S.pin);
+    if (dp < 240 || !S.line) return S.pin;
+    let best = S.pin, bestErr = 1e9;
+    for (const q of S.line.slice(1, -1)) { const d = d2(b, q), toPin = d2(q, S.pin); if (toPin >= dp - 20) continue; const err = Math.abs(d - 230); if (err < bestErr) { bestErr = err; best = q; } }
+    return best;
+  }
   function say(t, secs = 4) { S.msg = t; S.msgT = performance.now() + secs * 1000; drawHud(); drawBig(); }
   const rr = (c, x, y, w, h, r) => { c.beginPath(); c.roundRect(x, y, w, h, r); c.fill(); };
 
@@ -110,7 +118,7 @@ export function initVR(ctx) {
         c.fillStyle = '#9fb59a'; c.fillText(String(i), x, y); c.fillText('p' + hi.par, x, y + 30);
         c.fillStyle = s == null ? '#556' : s < hi.par ? '#7fe07f' : s > hi.par ? '#ff9d7a' : '#fff'; c.font = '600 28px sans-serif'; c.fillText(s == null ? '–' : String(s), x, y + 66); c.font = '24px sans-serif';
         if (s != null) { tot += s; par += hi.par; } }
-      c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText(par ? `Total ${tot} (${tot - par >= 0 ? '+' : ''}${tot - par})` : 'No holes finished yet', 22, 305);
+      c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText(par ? `Total ${tot} (${tot - par >= 0 ? '+' : ''}${tot - par})` : 'No holes finished yet', 22, 296); c.fillStyle = '#9fb59a'; c.font = '22px sans-serif'; c.fillText(`Now: hole ${S.hole} · A/B change hole`, 260, 296);
       hudTex.needsUpdate = true; return;
     }
     const hi = holeInfo(S.hole), dy = sim ? Math.round(d2(sim.pos, S.pin) * YD) : hi.yards, l = S.last;
@@ -158,7 +166,7 @@ export function initVR(ctx) {
   // where to stand for the current ball: beside it, facing it, target on the lead side
   function addressPose() {
     const bx = sim.pos[0], by = sim.pos[1], ball3 = V3(bx, sim.pos[2], -by);
-    let tx = S.pin[0] - bx, ty = S.pin[1] - by; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+    const A = aimPoint(); let tx = A[0] - bx, ty = A[1] - by; const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
     const T3 = V3(tx, 0, -ty), F = T3.clone().applyAxisAngle(UP, S.lefty ? Math.PI / 2 : -Math.PI / 2);
     const yaw = Math.atan2(-F.x, -F.z), stand = ball3.clone().addScaledVector(F, -0.78);
     const ph = toPhys(headWorld()), R = V3(ph.x, 0, ph.z).applyAxisAngle(UP, yaw);
@@ -175,7 +183,7 @@ export function initVR(ctx) {
   // ------------------------------------------------------------ hole flow
   function placeBall(x, y) { S.holedNow = false; sim.place(x, y); S.startPos = [x, y]; S.trail.length = 0; tracer.geometry.setDrawRange(0, 0); landMark.visible = false; }
   function newHole(n) {
-    const hi = holeInfo(n); S.hole = n; S.pin = hi.pin; S.strokes = 0; S.last = null;
+    const hi = holeInfo(n); S.hole = n; S.pin = hi.pin; S.line = (holes.find(x => x.hole === n) || holes[0]).line; S.strokes = 0; S.last = null;
     if (pinObj) world.remove(pinObj); pinObj = buildPin(n); const pz = course.height(hi.pin[0], hi.pin[1]); pinObj.position.set(hi.pin[0], pz, -hi.pin[1]); world.add(pinObj);
     placeBall(hi.tee[0], hi.tee[1]); setupAtBall(); drawHud(); drawBig();
   }
@@ -220,7 +228,7 @@ export function initVR(ctx) {
     const s0 = D.clone().normalize(), t = V3(s0.x, 0, s0.z);
     if (t.length() < 0.15) { say('Club too upright — reach out to the ball', 3); return; }
     t.normalize();
-    const T = V3(S.pin[0] - sim.pos[0], 0, -(S.pin[1] - sim.pos[1])).normalize();
+    const A = aimPoint(), T = V3(A[0] - sim.pos[0], 0, -(A[1] - sim.pos[1])).normalize();
     const n = T.clone().addScaledVector(t, -T.dot(t)).normalize();
     const Xw = S.lefty ? t.clone().negate() : t.clone(), Uw = V3().crossVectors(t, n).multiplyScalar(S.lefty ? -1 : 1).normalize(), Zw = n.clone().negate();
     const qi = Q.clone().invert(), old = S.cal;
@@ -339,8 +347,12 @@ export function initVR(ctx) {
   }
 
   function buttons(now, dt) {
-    if (edge('A', btn('right', 4))) { S.club = (S.club + 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
-    if (edge('B', btn('right', 5))) { S.club = (S.club + CLUBS.length - 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
+    if (showCard) {
+      if (edge('A', btn('right', 4)) && !sim.moving) { newHole(S.hole % 18 + 1); sfx.tick(); say(`Hole ${S.hole}`, 2); }
+      if (edge('B', btn('right', 5)) && !sim.moving) { newHole((S.hole + 16) % 18 + 1); sfx.tick(); say(`Hole ${S.hole}`, 2); }
+    }
+    else if (edge('A', btn('right', 4))) { S.club = (S.club + 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
+    else if (edge('B', btn('right', 5))) { S.club = (S.club + CLUBS.length - 1) % CLUBS.length; store.set('club', S.club); rebuildClub(); haptic('right', .3, 25); sfx.tick(); drawHud(); }
     if (edge('X', btn('left', 4)) && sim && !sim.moving) setupAtBall(true);
     if (edge('Y', btn('left', 5))) aimLine.visible = !aimLine.visible;
     if (edge('RS', btn('right', 3)) && sim && !sim.moving) { placeBall(S.startPos[0], S.startPos[1]); setupAtBall(); say('Mulligan — ball replaced', 2); }
@@ -395,7 +407,7 @@ export function initVR(ctx) {
     ball.position.set(sim.pos[0], sim.pos[2], -sim.pos[1]);
     ball.scale.setScalar(sim.state === State.Flight ? 1 + Math.min(5, headWorld().distanceTo(ball.position) / 25) : 1);
     ring.position.set(sim.pos[0], ground(ball.position.x, ball.position.z) + 0.006, -sim.pos[1]); ring.visible = !sim.moving;
-    aimLine.position.copy(ball.position); aimLine.rotation.y = Math.atan2(-(S.pin[0] - sim.pos[0]), (S.pin[1] - sim.pos[1]));
+    aimLine.position.copy(ball.position); { const A = aimPoint(); aimLine.rotation.y = Math.atan2(-(A[0] - sim.pos[0]), (A[1] - sim.pos[1])); }
     big.position.set(sim.start[0], sim.start[2] + 2.1, -sim.start[1]); big.lookAt(headWorld()); big.visible = !!(S.last || !S.cal || (S.msg && now < S.msgT));
     if (S.msg && now > S.msgT) { S.msg = ''; drawHud(); drawBig(); }
     vig.visible = S.vign > 0.02; vig.material.uniforms.a.value = S.vign;
@@ -408,6 +420,9 @@ export function initVR(ctx) {
   vrBtn.textContent = '⛳ Enter VR'; vrBtn.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:30;padding:12px 20px;font-size:16px;font-weight:650;background:#e3c565;color:#1a2314;border:0;border-radius:999px;box-shadow:0 4px 18px rgba(0,0,0,.4);display:none';
   document.body.appendChild(vrBtn);
   navigator.xr.isSessionSupported('immersive-vr').then(ok => { if (ok) vrBtn.style.display = 'block'; }).catch(() => { });
+  const hashHole = () => { const m = /^#hole(\d+)$/.exec(location.hash); return m ? Math.min(18, Math.max(1, +m[1])) : null; };
+  const label = () => { if (!S.on) vrBtn.textContent = `⛳ Play hole ${hashHole() || S.hole} in VR`; };
+  addEventListener('hashchange', label); label();
   const savedNear = camera.near, savedFar = camera.far;
   vrBtn.onclick = async () => {
     if (S.on) return;
@@ -416,15 +431,15 @@ export function initVR(ctx) {
       await loadPhysics(); await Promise.race([headsReady, new Promise(r => setTimeout(r, 4000))]);
       renderer.xr.enabled = true; renderer.xr.setReferenceSpaceType('local-floor'); renderer.xr.setFramebufferScaleFactor(+params.get('scale') || 0.85);
       const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor', 'bounded-floor'] });
-      session.addEventListener('end', () => { S.on = false; world.visible = false; camera.near = savedNear; camera.far = savedFar; camera.updateProjectionMatrix(); sun.castShadow = true; vrBtn.textContent = '⛳ Enter VR'; sfx.whoosh(0); });
+      session.addEventListener('end', () => { S.on = false; world.visible = false; camera.near = savedNear; camera.far = savedFar; camera.updateProjectionMatrix(); sun.castShadow = true; label(); sfx.whoosh(0); });
       await renderer.xr.setSession(session);
       camera.near = 0.03; camera.far = 7000; camera.updateProjectionMatrix();
       if (!params.has('shadows')) sun.castShadow = false;
-      S.base = renderer.xr.getReferenceSpace(); S.on = true; world.visible = true; vrBtn.textContent = '⛳ Enter VR';
-      attach(); newHole(S.hole);
+      S.base = renderer.xr.getReferenceSpace(); S.on = true; world.visible = true;
+      attach(); newHole(hashHole() || S.hole);
       setTimeout(() => setupAtBall(), 700);
       if (S.cal) say('Left stick walk · pump both grips to run · X: walk to ball · A/B: club', 7);
-    } catch (e) { console.warn('VR start failed', e); vrBtn.textContent = '⛳ Enter VR'; alert('Could not start VR: ' + (e.message || e)); }
+    } catch (e) { console.warn('VR start failed', e); S.on = false; label(); alert('Could not start VR: ' + (e.message || e)); }
   };
 
   // debug / test hooks
@@ -438,6 +453,6 @@ export function initVR(ctx) {
     const p = buildPin(1); p.position.set(base.x + 0.9, base.y, base.z + 0.9); g.add(p);
     return base;
   }
-  window.__crccVR = { headsReady, S, get sim() { return sim; }, CLUBS, update, loadPhysics, newHole, controllers, grips, rebuildClub, calibrate, attach, clubWorld, W, preview, setupAtBall };
+  window.__crccVR = { aimPoint, headsReady, S, get sim() { return sim; }, CLUBS, update, loadPhysics, newHole, controllers, grips, rebuildClub, calibrate, attach, clubWorld, W, preview, setupAtBall };
   return update;
 }
